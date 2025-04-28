@@ -3,5 +3,9 @@
 *.swp
 pcr
 prospero.c
+<<<<<<< HEAD
 prospero.pgm
+=======
+prospero-*.pgm
+>>>>>>> ddcb7e5 (z)
 prospero.vm

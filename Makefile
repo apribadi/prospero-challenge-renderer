@@ -14,10 +14,10 @@ CFLAGS = \
 	-Wno-shift-op-parentheses \
 	-ffp-contract=off \
 	-fno-math-errno \
+	-fno-slp-vectorize \
 	-fno-omit-frame-pointer
 
 #	-fsanitize=undefined \
-#	-fno-slp-vectorize \
 
 default: pcr
 

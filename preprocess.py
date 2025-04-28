@@ -58,64 +58,53 @@ def simplify(out, cse, ins):
                 case "neg", ("affine", a, b, c):
                     return emit(out, cse, ("affine", - a, - b, - c))
                 case "square", ("affine", a, b, c):
-                    if a + b < 0:
-                        x = emit(out, cse, ("affine", - a + 0.0, - b + 0.0, - c + 0.0))
-                        return emit(out, cse, ("square", x))
-                    else:
-                        x = emit(out, cse, ("affine", a + 0.0, b + 0.0, c + 0.0))
-                        return emit(out, cse, ("square", x))
+                    return emit(out, cse, ("square_affine", a, b, c))
                 case _:
                     return emit(out, cse, (op, x))
-        case op, Var(x), float(c):
+        case op, Var(x), float(t):
             match (op, out[x]):
-                case "ge_const", ("affine", a, b, d):
-                    if a + b < 0:
-                        x = emit(out, cse, ("affine", - a + 0.0, - b + 0.0, 0.0))
-                        return emit(out, cse, ("le_const", x, - (c - d) + 0.0))
-                    else:
-                        x = emit(out, cse, ("affine", a + 0.0, b + 0.0, 0.0))
-                        return emit(out, cse, ("ge_const", x, (c - d) + 0.0))
-                case "ge_const", ("sqrt", x):
-                    if c <= 0.0:
-                        return emit(out, cse, ("true",))
-                    return emit(out, cse, ("ge_const", x, c * c))
-                case "ge_const", ("add_const", x, d):
-                    return simplify(out, cse, ("ge_const", x, c - d))
-                case "ge_const", ("min", x, y):
-                    x = simplify(out, cse, ("ge_const", x, c))
-                    y = simplify(out, cse, ("ge_const", y, c))
-                    return simplify(out, cse, ("and", x, y))
-                case "ge_const", ("max", x, y):
-                    x = simplify(out, cse, ("ge_const", x, c))
-                    y = simplify(out, cse, ("ge_const", y, c))
-                    return simplify(out, cse, ("or", x, y))
-                case "le_const", ("affine", a, b, d):
-                    if a + b < 0:
-                        x = emit(out, cse, ("affine", - a + 0.0, - b + 0.0, 0.0))
-                        return emit(out, cse, ("ge_const", x, - (c - d) + 0.0))
-                    else:
-                        x = emit(out, cse, ("affine", a + 0.0, b + 0.0, 0.0))
-                        return emit(out, cse, ("le_const", x, (c - d) + 0.0))
+                case "le_const", ("affine", a, b, c):
+                    return emit(out, cse, ("line", a + 0, b + 0, - t + c + 0))
                 case "le_const", ("sqrt", x):
-                    if c < 0.0:
+                    if t < 0.0:
                         return emit(out, cse, ("false",))
-                    return emit(out, cse, ("le_const", x, c * c))
+                    return simplify(out, cse, ("le_const_sqrt", x, t))
                 case "le_const", ("const", x):
-                    return emit(out, cse, (("true",) if x <= c else ("false",)))
+                    return emit(out, cse, (("true",) if x <= t else ("false",)))
                 case "le_const", ("neg", x):
-                    return simplify(out, cse, ("ge_const", x, - c))
-                case "le_const", ("add_const", x, d):
-                    return simplify(out, cse, ("le_const", x, c - d))
+                    return simplify(out, cse, ("ge_const", x, - t))
+                case "le_const", ("add_const", x, c):
+                    return simplify(out, cse, ("le_const", x, t - c))
                 case "le_const", ("min", x, y):
-                    x = simplify(out, cse, ("le_const", x, c))
-                    y = simplify(out, cse, ("le_const", y, c))
+                    x = simplify(out, cse, ("le_const", x, t))
+                    y = simplify(out, cse, ("le_const", y, t))
                     return simplify(out, cse, ("or", x, y))
                 case "le_const", ("max", x, y):
-                    x = simplify(out, cse, ("le_const", x, c))
-                    y = simplify(out, cse, ("le_const", y, c))
+                    x = simplify(out, cse, ("le_const", x, t))
+                    y = simplify(out, cse, ("le_const", y, t))
                     return simplify(out, cse, ("and", x, y))
+                case "le_const_sqrt", ("add_square_affine", a, b, c, d, e, f):
+                    return emit(out, cse, ("ellipse", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, False))
+                case "ge_const", ("affine", a, b, c):
+                    return emit(out, cse, ("line", - a + 0, - b + 0, t - c + 0))
+                case "ge_const", ("sqrt", x):
+                    if t <= 0.0:
+                        return emit(out, cse, ("true",))
+                    return simplify(out, cse, ("ge_const_sqrt", x, t))
+                case "ge_const", ("add_const", x, c):
+                    return simplify(out, cse, ("ge_const", x, t - c))
+                case "ge_const", ("min", x, y):
+                    x = simplify(out, cse, ("ge_const", x, t))
+                    y = simplify(out, cse, ("ge_const", y, t))
+                    return simplify(out, cse, ("and", x, y))
+                case "ge_const", ("max", x, y):
+                    x = simplify(out, cse, ("ge_const", x, t))
+                    y = simplify(out, cse, ("ge_const", y, t))
+                    return simplify(out, cse, ("or", x, y))
+                case "ge_const_sqrt", ("add_square_affine", a, b, c, d, e, f):
+                    return emit(out, cse, ("ellipse", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, True))
                 case _:
-                    return emit(out, cse, (op, x, c))
+                    return emit(out, cse, (op, x, t))
         case op, Var(x), Var(y):
             match (op, out[x], out[y]):
                 case "add", ("affine", a, b, c), ("affine", d, e, f):
@@ -124,8 +113,8 @@ def simplify(out, cse, ins):
                     return emit(out, cse, ("affine", a, b, c + d))
                 case "add", ("const", d), ("affine", a, b, c):
                     return emit(out, cse, ("affine", a, b, c + d))
-                case "add", ("square", x), ("square", y):
-                    return emit(out, cse, ("hypot2", x, y))
+                case "add", ("square_affine", a, b, c), ("square_affine", d, e, f):
+                    return emit(out, cse, ("add_square_affine", a, b, c, d, e, f))
                 case "sub", ("affine", a, b, c), ("affine", d, e, f):
                     return emit(out, cse, ("affine", a - d, b - e, c - f))
                 case "sub", ("affine", a, b, c), ("const", d):
@@ -195,18 +184,22 @@ for i, ins in enumerate(code):
 
 code = out
 
-print(f"static Inst PROSPERO[{len(code)}] = {{")
+line = []
+ellipse = []
+
+print(f"static size_t PROSPERO_CODE_LEN = {len(code)};")
+print(f"")
+print(f"static Inst PROSPERO_CODE[{len(code)}] = {{")
 
 for i, ins in enumerate(code):
     match ins:
-        case "affine", a, b, c:
-            print(f"  [{i}] = {{ OP_AFFINE, .affine = {{ {a:.9}f, {b:.9}f, {c:.9}f }} }},")
-        case "hypot2", x, y:
-            print(f"  [{i}] = {{ OP_HYPOT2, .hypot2 = {{ {x}, {y} }} }},")
-        case "le_const", x, t:
-            print(f"  [{i}] = {{ OP_LE_CONST, .le_const = {{ {x}, {t:.9}f }} }},")
-        case "ge_const", x, t:
-            print(f"  [{i}] = {{ OP_GE_CONST, .ge_const = {{ {x}, {t:.9}f }} }},")
+        case "line", a, b, c:
+            k = push(line, (a, b, c))
+            print(f"  [{i}] = {{ OP_LINE, .line = {{ {k} }} }},")
+        case "ellipse", a, b, c, d, e, f, outside:
+            k = push(ellipse, (a, b, c, d, e, f))
+            o = "true" if outside else "false"
+            print(f"  [{i}] = {{ OP_ELLIPSE, .ellipse = {{ {k}, {o} }} }},")
         case "and", x, y:
             print(f"  [{i}] = {{ OP_AND, .and = {{ {x}, {y} }} }},")
         case "or", x, y:
@@ -216,4 +209,23 @@ for i, ins in enumerate(code):
         case _:
             raise RuntimeError(f"can't lower instruction: {ins}")
 
+print(f"}};")
+print(f"")
+print(f"static Line PROSPERO_LINE[{len(line)}] = {{")
+
+for (a, b, c) in line:
+    print(f"  {{ {a:+.9e}f, {b:+.9e}f, {c:+.9e}f }} ,")
+
+print(f"}};")
+print(f"")
+print(f"static Ellipse PROSPERO_ELLIPSE[{len(ellipse)}] = {{")
+
+for (a, b, c, d, e, f) in ellipse:
+    print(f"  {{ {a:+.9e}f, {b:+.9e}f, {c:+.9e}f, {d:+.9e}f, {e:+.9e}f, {f:+.9e}f }},")
+
+print(f"}};")
+print(f"")
+print(f"static Geometry PROSPERO_GEOMETRY = {{")
+print(f"  .line = PROSPERO_LINE,")
+print(f"  .ellipse = PROSPERO_ELLIPSE,")
 print(f"}};")

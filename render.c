@@ -1,36 +1,74 @@
-#include <arm_neon.h>
 #include <assert.h>
+#include <math.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "simd.h"
 #include "render.h"
 
-#define MAX_SPECIALIZATION_LEVELS 3
+// -------- ARENA ALLOCATOR --------
+//
+// a crude arena
+//
+// - fixed size
+// - 8-byte aligned
+
+typedef struct {
+  unsigned char * base;
+  size_t available;
+} Arena;
+
+__attribute__ ((noinline, noreturn))
+static void arena_alloc_failed(void) {
+  fprintf(stderr, "arena: allocation failed!\n");
+  abort();
+}
+
+static void arena_init(Arena * arena, size_t capacity) {
+  void * base = malloc(capacity);
+  if (! base) arena_alloc_failed();
+  arena->base = base;
+  arena->available = capacity;
+}
+
+static void arena_drop(Arena * arena) {
+  free(arena->base);
+}
+
+static inline void * arena_alloc_array(Arena * arena, size_t count, size_t size) {
+  if (count > arena->available / size) arena_alloc_failed();
+  size_t n = (arena->available - count * size) & - (size_t) 8;
+  arena->available = n;
+  return (void *) (arena->base + n);
+}
+
+#define ALLOC_ARRAY(arena, count, T) \
+  (T *) arena_alloc_array((arena), (count), sizeof(T))
+
+static inline void * arena_alloc_array_zeroed(Arena * arena, size_t count, size_t size) {
+  return memset(arena_alloc_array(arena, count, size), 0, count * size);
+}
+
+#define ALLOC_ARRAY_ZEROED(arena, count, T) \
+  (T *) arena_alloc_array_zeroed((arena), (count), sizeof(T))
 
 // -------- PRIORITY QUEUE (AND SET) --------
 
 typedef struct {
-  size_t capacity;
   size_t size;
   uint16_t * data;
   bool * included;
 } PQ;
 
-static void pq_init(PQ * t, size_t capacity) {
-  t->capacity = capacity;
+static void pq_init(PQ * t, Arena * arena, size_t capacity) {
   t->size = 0;
-  t->data = malloc(capacity * sizeof(uint16_t));
-  t->included = calloc(capacity, sizeof(bool));
-}
-
-static void pq_drop(PQ * t) {
-  free(t->data);
-  free(t->included);
+  t->data = ALLOC_ARRAY(arena, capacity, uint16_t);
+  t->included = ALLOC_ARRAY_ZEROED(arena, capacity, bool);
 }
 
 static inline bool pq_is_empty(PQ * t) {
@@ -71,24 +109,22 @@ static uint16_t pq_pop(PQ * t) {
   included[r] = false;
 
   for (;;) {
-    size_t a = 2 * i + 1;
-    size_t b = 2 * i + 2;
+    size_t k = 2 * i + 1;
 
-    if (b < n) {
-      uint16_t u = data[a];
-      uint16_t v = data[b];
+    if (k + 1 < n) {
+      uint16_t u = data[k];
+      uint16_t v = data[k + 1];
       if (u <= x && v <= x) break;
-      bool p = u >= v;
-      data[i] = p ? u : v;
-      i = p ? a : b;
+      data[i] = u < v ? v : u;
+      i = k + (u < v);
       continue;
     }
 
-    if (a < n) {
-      uint16_t u = data[a];
+    if (k < n) {
+      uint16_t u = data[k];
       if (u <= x) break;
       data[i] = u;
-      i = a;
+      i = k;
       continue;
     }
 
@@ -100,540 +136,273 @@ static uint16_t pq_pop(PQ * t) {
   return r;
 }
 
-// -------- BUFFER OF U16 --------
-
-typedef struct { size_t capacity; uint16_t * data; } BufU16;
-
-static void buf_u16_init(BufU16 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->data = malloc(capacity * sizeof(uint16_t));
-}
-
-static void buf_u16_drop(BufU16 * t) {
-  free(t->data);
-}
-
-// -------- BUFFER OF INSTRUCTIONS --------
-
-typedef struct { size_t capacity; Inst * data; } BufInst;
-
-static void buf_inst_init(BufInst * t, size_t capacity) {
-  t->capacity = capacity;
-  t->data = malloc(capacity * sizeof(Inst));
-}
-
-static void buf_inst_drop(BufInst * t) {
-  free(t->data);
-}
-
-// -------- SLOT AND ENVIRONMENT TYPES FOR INTERPRETER LOOPS --------
-
-typedef union {
-  struct {
-    float min[16];
-    float max[16];
-  } floats;
-  struct {
-    uint8_t is_f[16];
-    uint8_t is_t[16];
-    uint16_t link[16];
-  } bools;
-} Slot1;
-
-typedef struct {
-  size_t capacity;
-  float x[5];
-  float y[5];
-  Slot1 * slots;
-} Env1;
-
-static void env1_init(Env1 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->slots = malloc(capacity * sizeof(Slot1));
-}
-
-static void env1_drop(Env1 * t) {
-  free(t->slots);
-}
-
-typedef union {
-  float floats[256];
-  uint8_t bools[256];
-} Slot2;
-
-typedef struct {
-  size_t capacity;
-  float x[16];
-  float y[16];
-  Slot2 * slots;
-} Env2;
-
-static void env2_init(Env2 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->slots = malloc(capacity * sizeof(Slot2));
-}
-
-static void env2_drop(Env2 * t) {
-  free(t->slots);
-}
-
-// -------- SCRATCH DYNAMICALLY SIZED DATA STRUCTURES --------
-
-typedef struct {
-  BufU16 rev;
-  BufU16 map;
-  PQ pq;
-  Env1 env1;
-  Env2 env2;
-  BufInst code[MAX_SPECIALIZATION_LEVELS][16];
-} Scratch;
-
-static void scratch_init(Scratch * t) {
-  // We're assuming that a zero size_t and a null pointer are both just zero
-  // bytes.
-  memset(t, 0, sizeof(Scratch));
-}
-
-static void scratch_drop(Scratch * t) {
-  buf_u16_drop(&t->rev);
-  buf_u16_drop(&t->map);
-  pq_drop(&t->pq);
-  env1_drop(&t->env1);
-  env2_drop(&t->env2);
-  for (size_t i = 0; i < MAX_SPECIALIZATION_LEVELS; i ++) {
-    for (size_t j = 0; j < 16; j ++) {
-      buf_inst_drop(&t->code[i][j]);
-    }
-  }
-}
-
-static uint16_t * scratch_rev(Scratch * t, size_t capacity) {
-  if (capacity <= t->rev.capacity) return t->rev.data;
-  buf_u16_drop(&t->rev);
-  buf_u16_init(&t->rev, capacity);
-  return t->rev.data;
-}
-
-static uint16_t * scratch_map(Scratch * t, size_t capacity) {
-  if (capacity <= t->map.capacity) return t->map.data;
-  buf_u16_drop(&t->map);
-  buf_u16_init(&t->map, capacity);
-  return t->map.data;
-}
-
-static PQ * scratch_pq(Scratch * t, size_t capacity) {
-  if (capacity <= t->pq.capacity) return &t->pq;
-  pq_drop(&t->pq);
-  pq_init(&t->pq, capacity);
-  return &t->pq;
-}
-
-static Env1 * scratch_env1(Scratch * t, size_t capacity) {
-  if (capacity <= t->env1.capacity) return &t->env1;
-  env1_drop(&t->env1);
-  env1_init(&t->env1, capacity);
-  return &t->env1;
-}
-
-static Env2 * scratch_env2(Scratch * t, size_t capacity) {
-  if (capacity <= t->env2.capacity) return &t->env2;
-  env2_drop(&t->env2);
-  env2_init(&t->env2, capacity);
-  return &t->env2;
-}
-
-static Inst * scratch_code(Scratch * t, size_t i, size_t j, size_t capacity) {
-  BufInst * code = &t->code[i][j];
-  if (capacity <= code->capacity) return code->data;
-  buf_inst_drop(code);
-  buf_inst_init(code, capacity);
-  return code->data;
-}
-
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
-typedef struct Tbl1_ {
-  size_t (* ops[8])(Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
-} Tbl1;
+typedef struct {
+  float x[5];
+  float y[5];
+} Input1;
 
-static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc) {
-  // cp - code pointer
-  // ep - environment pointer
-  // sp - stack pointer
-  // tp - table pointer
-  // pc - program counter
-  Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
+typedef struct {
+  uint8_t is_f[16];
+  uint8_t is_t[16];
+  uint16_t link[16];
+} Slot1;
+
+typedef struct Table1_ {
+  void (* ops[6])(Geometry, Inst *, Input1 *, Slot1 *, struct Table1_ *, size_t, Inst);
+} Table1;
+
+#define ARGS1 \
+  __attribute__((unused)) Geometry geometry, \
+  __attribute__((unused)) Inst * code, \
+  __attribute__((unused)) Input1 * input, \
+  __attribute__((unused)) Slot1 * slots, \
+  __attribute__((unused)) Table1 * table, \
+  __attribute__((unused)) size_t pc, \
+  __attribute__((unused)) Inst inst
+
+#define DISPATCH1 \
+  do { \
+    Inst inst = code[pc + 1]; \
+    return table->ops[inst.op](geometry, code, input, slots, table, pc + 1, inst); \
+  } while (0)
+
+static inline vzsf dup4x(vxsf x) {
+  return vzsf_from_vxsf_x4(x, x, x, x);
 }
 
-static size_t op1_affine(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  float a = inst.affine.a;
-  float b = inst.affine.b;
-  float c = inst.affine.c;
-  vxsf xmin = vxsf_load(&ep->x[0]);
-  vxsf xmax = vxsf_load(&ep->x[1]);
-  vxsf ymin = vxsf_load(&ep->y[1]);
-  vxsf ymax = vxsf_load(&ep->y[0]);
-  vxsf umin = vxsf_add(vxsf_mul(a < 0.0f ? xmax : xmin, vxsf_dup(a)), vxsf_dup(c));
-  vxsf umax = vxsf_add(vxsf_mul(a < 0.0f ? xmin : xmax, vxsf_dup(a)), vxsf_dup(c));
-  vxsf vmin = vxsf_mul(b < 0.0f ? ymax : ymin, vxsf_dup(b));
-  vxsf vmax = vxsf_mul(b < 0.0f ? ymin : ymax, vxsf_dup(b));
-  vzsf wmin =
-    vzsf_from_vxsf_x4(
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 0))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 1))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 2))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 3))));
-  vzsf_store(sp[pc].floats.min, wmin);
-  vzsf wmax =
-    vzsf_from_vxsf_x4(
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 0))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 1))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 2))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 3))));
-  vzsf_store(sp[pc].floats.max, wmax);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+static inline vzsf dup4y(vxsf x) {
+  float a = vxsf_get(x, 0);
+  float b = vxsf_get(x, 1);
+  float c = vxsf_get(x, 2);
+  float d = vxsf_get(x, 3);
+  return vzsf_from_vxsf_x4(vxsf_dup(a), vxsf_dup(b), vxsf_dup(c), vxsf_dup(d));
 }
 
-static size_t op1_hypot2(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.hypot2.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.hypot2.x].floats.max);
-  vzsf ymin = vzsf_load(sp[inst.hypot2.y].floats.min);
-  vzsf ymax = vzsf_load(sp[inst.hypot2.y].floats.max);
-  vzsf umin =
+static inline vzsf min_grid_lin(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_mul_n(vxsf_select(p, xmax, xmin), a);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymax, ymin), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf max_grid_lin(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_mul_n(vxsf_select(p, xmin, xmax), a);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymin, ymax), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf min_grid_aff(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b, float c) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_fma_n(vxsf_select(p, xmax, xmin), a, vxsf_dup(c));
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymax, ymin), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf max_grid_aff(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b, float c) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_fma_n(vxsf_select(p, xmin, xmax), a, vxsf_dup(c));
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymin, ymax), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf min_sq(vzsf xmin, vzsf xmax) {
+  return
     vzsf_or(
-      vzsf_and(vzsf_mul(xmin, xmin), vzsf_le(VZSF_ZERO, xmin)),
-      vzsf_and(vzsf_mul(xmax, xmax), vzsf_le(xmax, VZSF_ZERO)));
-  vzsf vmin =
-    vzsf_or(
-      vzsf_and(vzsf_mul(ymin, ymin), vzsf_le(VZSF_ZERO, ymin)),
-      vzsf_and(vzsf_mul(ymax, ymax), vzsf_le(ymax, VZSF_ZERO)));
-  vzsf_store(sp[pc].floats.min, vzsf_add(umin, vmin));
-  vzsf umax = vzsf_max(vzsf_mul(xmin, xmin), vzsf_mul(xmax, xmax));
-  vzsf vmax = vzsf_max(vzsf_mul(ymin, ymin), vzsf_mul(ymax, ymax));
-  vzsf_store(sp[pc].floats.max, vzsf_add(umax, vmax));
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+      vzsf_and(vzsf_mul(xmin, xmin), vzsf_lt(vzsf_dup(0.0f), xmin)),
+      vzsf_and(vzsf_mul(xmax, xmax), vzsf_lt(xmax, vzsf_dup(0.0f))));
 }
 
-static size_t op1_le_const(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.le_const.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.le_const.x].floats.max);
-  vzsf a = vzsf_dup(inst.le_const.a);
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(a, xmin)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(xmax, a)));
-  vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+static inline vzsf max_sq(vzsf xmin, vzsf xmax) {
+  return vzsf_max(vzsf_mul(xmin, xmin), vzsf_mul(xmax, xmax));
 }
 
-static size_t op1_ge_const(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.ge_const.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.ge_const.x].floats.max);
-  vzsf a = vzsf_dup(inst.ge_const.a);
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(xmax, a)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(a, xmin)));
-  vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+static void op1_line(ARGS1) {
+  Line l = geometry.line[inst.line.index];
+  vxsf xmin = vxsf_load(&input->x[0]);
+  vxsf xmax = vxsf_load(&input->x[1]);
+  vxsf ymin = vxsf_load(&input->y[1]);
+  vxsf ymax = vxsf_load(&input->y[0]);
+  vzsf zmin = min_grid_lin(xmin, xmax, ymin, ymax, l.a, l.b);
+  vzsf zmax = max_grid_lin(xmin, xmax, ymin, ymax, l.a, l.b);
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- l.c), zmin)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(zmax, vzsf_dup(- l.c))));
+  vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
+  DISPATCH1;
 }
 
-static size_t op1_and(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vxbu x_is_f = vxbu_load(sp[inst.and.x].bools.is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.and.x].bools.is_t);
-  vyhu x_link = vyhu_load(sp[inst.and.x].bools.link);
-  vxbu y_is_f = vxbu_load(sp[inst.and.y].bools.is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.and.y].bools.is_t);
-  vyhu y_link = vyhu_load(sp[inst.and.y].bools.link);
-  vxbu_store(sp[pc].bools.is_f, vxbu_or(x_is_f, y_is_f));
-  vxbu_store(sp[pc].bools.is_t, vxbu_and(x_is_t, y_is_t));
+static void op1_ellipse(ARGS1) {
+  Ellipse e = geometry.ellipse[inst.ellipse.index];
+  vxsf xmin = vxsf_load(&input->x[0]);
+  vxsf xmax = vxsf_load(&input->x[1]);
+  vxsf ymin = vxsf_load(&input->y[1]);
+  vxsf ymax = vxsf_load(&input->y[0]);
+  vzsf umin = min_grid_aff(xmin, xmax, ymin, ymax, e.a, e.b, e.c);
+  vzsf umax = max_grid_aff(xmin, xmax, ymin, ymax, e.a, e.b, e.c);
+  vzsf vmin = min_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
+  vzsf vmax = max_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
+  vzsf wmin = vzsf_add_n(vzsf_add(min_sq(umin, umax), min_sq(vmin, vmax)), -1.0f);
+  vzsf wmax = vzsf_add_n(vzsf_add(max_sq(umin, umax), max_sq(vmin, vmax)), -1.0f);
+  vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
+  vzsf zmin = vzsf_select(p, vzsf_neg(wmax), wmin);
+  vzsf zmax = vzsf_select(p, vzsf_neg(wmin), wmax);
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), zmin)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(zmax, vzsf_dup(0.0f))));
+  vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
+  DISPATCH1;
+}
+
+static void op1_and(ARGS1) {
+  vxbu x_is_f = vxbu_load(slots[inst.and.x].is_f);
+  vxbu x_is_t = vxbu_load(slots[inst.and.x].is_t);
+  vyhu x_link = vyhu_load(slots[inst.and.x].link);
+  vxbu y_is_f = vxbu_load(slots[inst.and.y].is_f);
+  vxbu y_is_t = vxbu_load(slots[inst.and.y].is_t);
+  vyhu y_link = vyhu_load(slots[inst.and.y].link);
+  vxbu_store(slots[pc].is_f, vxbu_or(x_is_f, y_is_f));
+  vxbu_store(slots[pc].is_t, vxbu_and(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(x_is_t), y_link, link);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(y_is_t), x_link, link);
-  vyhu_store(sp[pc].bools.link, link);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  link = vyhu_select(vxbu_vyhu_movemask(x_is_t), y_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(y_is_t), x_link, link);
+  vyhu_store(slots[pc].link, link);
+  DISPATCH1;
 }
 
-static size_t op1_or(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vxbu x_is_f = vxbu_load(sp[inst.or.x].bools.is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.or.x].bools.is_t);
-  vyhu x_link = vyhu_load(sp[inst.or.x].bools.link);
-  vxbu y_is_f = vxbu_load(sp[inst.or.y].bools.is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.or.y].bools.is_t);
-  vyhu y_link = vyhu_load(sp[inst.or.y].bools.link);
-  vxbu_store(sp[pc].bools.is_f, vxbu_and(x_is_f, y_is_f));
-  vxbu_store(sp[pc].bools.is_t, vxbu_or(x_is_t, y_is_t));
+static void op1_or(ARGS1) {
+  vxbu x_is_f = vxbu_load(slots[inst.or.x].is_f);
+  vxbu x_is_t = vxbu_load(slots[inst.or.x].is_t);
+  vyhu x_link = vyhu_load(slots[inst.or.x].link);
+  vxbu y_is_f = vxbu_load(slots[inst.or.y].is_f);
+  vxbu y_is_t = vxbu_load(slots[inst.or.y].is_t);
+  vyhu y_link = vyhu_load(slots[inst.or.y].link);
+  vxbu_store(slots[pc].is_f, vxbu_and(x_is_f, y_is_f));
+  vxbu_store(slots[pc].is_t, vxbu_or(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(x_is_f), y_link, link);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(y_is_f), x_link, link);
-  vyhu_store(sp[pc].bools.link, link);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  link = vyhu_select(vxbu_vyhu_movemask(x_is_f), y_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(y_is_f), x_link, link);
+  vyhu_store(slots[pc].link, link);
+  DISPATCH1;
 }
 
-static size_t op1_ret(Inst *, Env1 *, Slot1 *, Tbl1 *, size_t, Inst inst) {
-  return inst.ret.x;
+static void op1_ret(ARGS1) {
 }
 
-static size_t op1_ret_const(Inst *, Env1 *, Slot1 *, Tbl1 *, size_t pc, Inst) {
-  return pc;
+static void op1_ret_const(ARGS1) {
 }
 
-static void analyze(Inst * cp, Env1 * ep, Slot1 * sp) {
-  static Tbl1 TBL1 = {{
-    op1_affine,
-    op1_hypot2,
-    op1_le_const,
-    op1_ge_const,
+static void analyze(Geometry geometry, Inst * code, Input1 * input, Slot1 * slots) {
+  static Table1 TABLE = {{
+    op1_line,
+    op1_ellipse,
     op1_and,
     op1_or,
     op1_ret,
-    op1_ret_const
+    op1_ret_const,
   }};
 
-  (void) op1_dispatch(cp, ep, sp, &TBL1, 0);
-}
-
-// -------- RASTERIZE A 256 PIXEL REGION --------
-
-typedef struct Tbl2_ {
-  size_t (* ops[8])(Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
-} Tbl2;
-
-static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc) {
-  Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
-}
-
-static size_t op2_affine(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  vzsf x = vzsf_load(ep->x);
-  vzsf u = vzsf_add(vzsf_mul(x, vzsf_dup(inst.affine.a)), vzsf_dup(inst.affine.c));
-  for (size_t h = 0; h < 4; h ++) {
-    vxsf y = vxsf_load(&ep->y[4 * h]);
-    vxsf v = vxsf_mul(y, vxsf_dup(inst.affine.b));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 0], vzsf_add(u, vzsf_dup(vxsf_get(v, 0))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 1], vzsf_add(u, vzsf_dup(vxsf_get(v, 1))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 2], vzsf_add(u, vzsf_dup(vxsf_get(v, 2))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 3], vzsf_add(u, vzsf_dup(vxsf_get(v, 3))));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_hypot2(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t k = 0; k < 16; k ++) {
-    vzsf x = vzsf_load(&sp[inst.hypot2.x].floats[16 * k]);
-    vzsf y = vzsf_load(&sp[inst.hypot2.y].floats[16 * k]);
-    vzsf_store(&sp[pc].floats[16 * k], vzsf_add(vzsf_mul(x, x), vzsf_mul(y, y)));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_le_const(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzsf x0 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 0]);
-    vzsf x1 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 1]);
-    vzsf x2 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 2]);
-    vzsf x3 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 3]);
-    vxbu u0 = vzsu_vxbu_movemask(vzsf_le(x0, vzsf_dup(inst.le_const.a)));
-    vxbu u1 = vzsu_vxbu_movemask(vzsf_le(x1, vzsf_dup(inst.le_const.a)));
-    vxbu u2 = vzsu_vxbu_movemask(vzsf_le(x2, vzsf_dup(inst.le_const.a)));
-    vxbu u3 = vzsu_vxbu_movemask(vzsf_le(x3, vzsf_dup(inst.le_const.a)));
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_from_vxbu_x4(u0, u1, u2, u3));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_ge_const(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzsf x0 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 0]);
-    vzsf x1 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 1]);
-    vzsf x2 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 2]);
-    vzsf x3 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 3]);
-    vxbu u0 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x0));
-    vxbu u1 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x1));
-    vxbu u2 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x2));
-    vxbu u3 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x3));
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_from_vxbu_x4(u0, u1, u2, u3));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_and(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu x = vzbu_load(&sp[inst.and.x].bools[64 * h]);
-    vzbu y = vzbu_load(&sp[inst.and.y].bools[64 * h]);
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_and(x, y));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_or(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu x = vzbu_load(&sp[inst.or.x].bools[64 * h]);
-    vzbu y = vzbu_load(&sp[inst.or.y].bools[64 * h]);
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_or(x, y));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
-
-static size_t op2_ret(Inst *, Env2 *, Slot2 *, Tbl2 *, size_t, Inst inst) {
-  return inst.ret.x;
-}
-
-static size_t op2_ret_const(Inst *, Env2 *, Slot2 * sp, Tbl2 *, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_dup(inst.ret_const.a ? 255 : 0));
-  }
-  return pc;
-}
-
-static void rasterize(
-    Scratch * scratch,
-    size_t code_len,
-    Inst code[code_len],
-    float xmin,
-    float xlen,
-    float ymax,
-    float ylen,
-    size_t stride,
-    uint8_t * tile
-  )
-{
-  static Tbl2 TBL2 = {{
-    op2_affine,
-    op2_hypot2,
-    op2_le_const,
-    op2_ge_const,
-    op2_and,
-    op2_or,
-    op2_ret,
-    op2_ret_const
-  }};
-
-  Env2 * ep = scratch_env2(scratch, code_len);
-  Slot2 * sp = ep->slots;
-
-  float dx = 0.0625f * xlen;
-  float dy = 0.0625f * ylen;
-
-  for (size_t k = 0; k < 16; k ++) {
-    ep->x[k] = xmin + 0.5f * dx + dx * (float) k;
-    ep->y[k] = ymax - 0.5f * dy - dy * (float) k;
-  }
-
-  size_t result = op2_dispatch(code, ep, sp, &TBL2, 0);
-
-  for (size_t k = 0; k < 16; k ++) {
-    memcpy(tile + stride * k, &sp[result].bools[16 * k], 16);
-  }
+  Inst inst = code[0];
+  TABLE.ops[inst.op](geometry, code, input, slots, &TABLE, 0, inst);
 }
 
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
 
 static void specialize(
-    Scratch * scratch,
+    Arena arena,
+    Arena * code_arena,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
     float xlen,
     float ymax,
     float ylen,
-    size_t depth,
     size_t out_code_len[16],
     Inst * out_code[16]
   )
 {
-  Env1 * ep = scratch_env1(scratch, code_len);
-  Slot1 * sp = ep->slots;
+  Input1 input;
 
   for (size_t k = 0; k < 5; k ++) {
-    ep->x[k] = xmin + 0.25f * xlen * (float) k;
-    ep->y[k] = ymax - 0.25f * ylen * (float) k;
+    input.x[k] = xmin + 0.25f * xlen * (float) k;
+    input.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  analyze(code, ep, sp);
+  Slot1 * slots = ALLOC_ARRAY(&arena, code_len, Slot1);
 
-  uint16_t * rev = scratch_rev(scratch, code_len);
-  uint16_t * map = scratch_map(scratch, code_len);
-  PQ * gray = scratch_pq(scratch, code_len);
+  analyze(geometry, code, &input, slots);
+
+  uint16_t * black = ALLOC_ARRAY(&arena, code_len, uint16_t);
+  uint16_t * remap = ALLOC_ARRAY(&arena, code_len, uint16_t);
+
+  PQ gray;
+  pq_init(&gray, &arena, code_len);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t sub_code_len = 0;
 
     {
       uint16_t k = (uint16_t) (code_len - 1);
-      rev[sub_code_len ++] = k;
+      black[sub_code_len ++] = k;
       Inst inst = code[k];
       if (inst.op == OP_RET) {
-        if (! sp[inst.ret.x].bools.is_f[t] && ! sp[inst.ret.x].bools.is_t[t]) {
-          pq_insert(gray, sp[inst.ret.x].bools.link[t]);
-          pq_insert(gray, sp[inst.ret.x].bools.link[t]);
+        if (! slots[inst.ret.x].is_f[t] && ! slots[inst.ret.x].is_t[t]) {
+          pq_insert(&gray, slots[inst.ret.x].link[t]);
         }
       }
     }
 
-    while (! pq_is_empty(gray)) {
-      uint16_t k = pq_pop(gray);
-      rev[sub_code_len ++] = k;
+    while (! pq_is_empty(&gray)) {
+      uint16_t k = pq_pop(&gray);
+      black[sub_code_len ++] = k;
       Inst inst = code[k];
 
       switch (inst.op) {
-      case OP_HYPOT2:
-        pq_insert(gray, inst.hypot2.x);
-        pq_insert(gray, inst.hypot2.y);
-        break;
-      case OP_LE_CONST:
-        pq_insert(gray, inst.le_const.x);
-        break;
-      case OP_GE_CONST:
-        pq_insert(gray, inst.ge_const.x);
-        break;
       case OP_AND:
-        pq_insert(gray, sp[inst.and.x].bools.link[t]);
-        pq_insert(gray, sp[inst.and.y].bools.link[t]);
+        pq_insert(&gray, slots[inst.and.x].link[t]);
+        pq_insert(&gray, slots[inst.and.y].link[t]);
         break;
       case OP_OR:
-        pq_insert(gray, sp[inst.or.x].bools.link[t]);
-        pq_insert(gray, sp[inst.or.y].bools.link[t]);
+        pq_insert(&gray, slots[inst.or.x].link[t]);
+        pq_insert(&gray, slots[inst.or.y].link[t]);
         break;
       default:
         break;
       }
     }
 
-    Inst * sub_code = scratch_code(scratch, depth, t, sub_code_len);
+    Inst * sub_code = ALLOC_ARRAY(code_arena, sub_code_len, Inst);
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
 
     for (size_t i = 0; i < sub_code_len; i ++) {
-      uint16_t k = rev[sub_code_len - 1 - i];
+      uint16_t k = black[sub_code_len - 1 - i];
 
-      map[k] = (uint16_t) i;
+      remap[k] = (uint16_t) i;
       Inst inst = code[k];
 
       switch (inst.op) {
-      case OP_HYPOT2:
-        inst.hypot2.x = map[inst.hypot2.x];
-        inst.hypot2.y = map[inst.hypot2.y];
-        break;
-      case OP_LE_CONST:
-        inst.le_const.x = map[inst.le_const.x];
-        break;
-      case OP_GE_CONST:
-        inst.ge_const.x = map[inst.ge_const.x];
-        break;
       case OP_AND:
-        inst.and.x = map[sp[inst.and.x].bools.link[t]];
-        inst.and.y = map[sp[inst.and.y].bools.link[t]];
+        inst.and.x = remap[slots[inst.and.x].link[t]];
+        inst.and.y = remap[slots[inst.and.y].link[t]];
         break;
       case OP_OR:
-        inst.or.x = map[sp[inst.or.x].bools.link[t]];
-        inst.or.y = map[sp[inst.or.y].bools.link[t]];
+        inst.or.x = remap[slots[inst.or.x].link[t]];
+        inst.or.y = remap[slots[inst.or.y].link[t]];
         break;
       case OP_RET:
-        if (sp[inst.ret.x].bools.is_f[t]) {
+        if (slots[inst.ret.x].is_f[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { false } };
-        } else if (sp[inst.ret.x].bools.is_t[t]) {
+        } else if (slots[inst.ret.x].is_t[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { true } };
         } else {
-          inst.ret.x = map[sp[inst.ret.x].bools.link[t]];
+          inst.ret.x = remap[slots[inst.ret.x].link[t]];
         }
         break;
       default:
@@ -645,64 +414,202 @@ static void specialize(
   }
 }
 
-// -------- RENDER --------
+// -------- DRAW A 256 PIXEL REGION --------
 
-static void render_tile(
-    Scratch * scratch,
+typedef struct {
+  float x[16];
+  float y[16];
+} Input2;
+
+typedef struct {
+  uint8_t bitset[32];
+} Slot2;
+
+typedef struct Table2_ {
+  size_t (* ops[6])(Geometry, Inst *, Input2 *, Slot2 *, struct Table2_ *, size_t, Inst);
+} Table2;
+
+#define ARGS2 \
+  __attribute__((unused)) Geometry geometry, \
+  __attribute__((unused)) Inst * code, \
+  __attribute__((unused)) Input2 * input, \
+  __attribute__((unused)) Slot2 * slots, \
+  __attribute__((unused)) Table2 * table, \
+  __attribute__((unused)) size_t pc, \
+  __attribute__((unused)) Inst inst
+
+#define DISPATCH2 \
+  do { \
+    Inst inst = code[pc + 1]; \
+    return table->ops[inst.op](geometry, code, input, slots, table, pc + 1, inst); \
+  } while (0)
+
+static size_t op2_line(ARGS2) {
+  Line l = geometry.line[inst.line.index];
+  vzsf x = vzsf_load(input->x);
+  vzsf z = vzsf_fma_n(x, l.a, vzsf_dup(l.c));
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu m = vxbu_dup(0);
+    for (size_t i = 8; i -- != 0; ) {
+      float y = input->y[8 * h + i];
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- l.b * y)));
+      m = vxbu_add(m, m);
+      m = vxbu_sub(m, w);
+    }
+    vxbu_store(&slots[pc].bitset[16 * h], m);
+  }
+  DISPATCH2;
+}
+
+static size_t op2_ellipse(ARGS2) {
+  Ellipse e = geometry.ellipse[inst.ellipse.index];
+  vzsf x = vzsf_load(input->x);
+  vzsu p = vzsu_dup(inst.ellipse.outside ? 1ul << 31 : 0);
+  vzsf r = vzsf_fma_n(x, e.a, vzsf_dup(e.c));
+  vzsf s = vzsf_fma_n(x, e.d, vzsf_dup(e.f));
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu m = vxbu_dup(0);
+    for (size_t i = 8; i -- != 0; ) {
+      float y = input->y[8 * h + i];
+      vzsf u = vzsf_add_n(r, e.b * y);
+      vzsf v = vzsf_add_n(s, e.e * y);
+      vzsf z = vzsf_xor(vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f))), p);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(0.0f)));
+      m = vxbu_add(m, m);
+      m = vxbu_sub(m, w);
+    }
+    vxbu_store(&slots[pc].bitset[16 * h], m);
+  }
+  DISPATCH2;
+}
+
+static size_t op2_and(ARGS2) {
+  vybu x = vybu_load(slots[inst.and.x].bitset);
+  vybu y = vybu_load(slots[inst.and.y].bitset);
+  vybu_store(slots[pc].bitset, vybu_and(x, y));
+  DISPATCH2;
+}
+
+static size_t op2_or(ARGS2) {
+  vybu x = vybu_load(slots[inst.or.x].bitset);
+  vybu y = vybu_load(slots[inst.or.y].bitset);
+  vybu_store(slots[pc].bitset, vybu_or(x, y));
+  DISPATCH2;
+}
+
+static size_t op2_ret(ARGS2) {
+  return inst.ret.x;
+}
+
+static size_t op2_ret_const(ARGS2) {
+  vybu_store(slots[pc].bitset, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
+  return pc;
+}
+
+static void draw_tile_16(
+    Arena arena,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
     float xlen,
     float ymax,
     float ylen,
-    size_t depth,
+    size_t stride,
+    uint8_t * tile
+  )
+{
+  static Table2 TABLE = {{
+    op2_line,
+    op2_ellipse,
+    op2_and,
+    op2_or,
+    op2_ret,
+    op2_ret_const,
+  }};
+
+  Input2 input;
+
+  Slot2 * slots = ALLOC_ARRAY(&arena, code_len, Slot2);
+
+  float dx = 0.0625f * xlen;
+  float dy = 0.0625f * ylen;
+
+  for (size_t k = 0; k < 16; k ++) {
+    input.x[k] = xmin + 0.5f * dx + dx * (float) k;
+    input.y[k] = ymax - 0.5f * dy - dy * (float) k;
+  }
+
+  Inst inst = code[0];
+  size_t result = TABLE.ops[inst.op](geometry, code, &input, slots, &TABLE, 0, inst);
+
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu m = vxbu_load(&slots[result].bitset[16 * h]);
+    for (size_t i = 0; i < 8; i ++) {
+      vxbu w = vxbu_test(m, vxbu_dup((uint8_t) (1 << i)));
+      vxbu_store(tile + 8 * stride * h + stride * i, w);
+    }
+  }
+}
+
+static void fill_tile_16(Inst * code, size_t stride, uint8_t * tile) {
+  // Per the spec, this should be `? 255 : 0`, but we add some grays for
+  // illustrative purposes.
+  uint8_t value = code[0].ret_const.value ? 192 : 64;
+
+  for (size_t i = 0; i < 16; i ++) {
+    memset(tile + stride * i, value, 16);
+  }
+}
+
+// -------- DRAW RECURSIVELY --------
+
+static void fill_tile(Inst * code, size_t resolution, size_t stride, uint8_t * tile) {
+  assert(resolution >= 64);
+
+  uint8_t value = code[0].ret_const.value ? 160 : 96;
+
+  for (size_t i = 0; i < resolution; i ++) {
+    for (size_t j = 0; j < resolution; j += 64) {
+      // it would be nice to use non-temporal stores
+      memset(tile + stride * i + j, value, 64);
+    }
+  }
+}
+
+static void draw_tile(
+    Arena arena,
+    Arena code_arena,
+    Geometry geometry,
+    size_t code_len,
+    Inst code[code_len],
+    float xmin,
+    float xlen,
+    float ymax,
+    float ylen,
     size_t resolution,
     size_t stride,
     uint8_t * tile
   )
 {
-  if (code_len == 1 && code[0].op == OP_RET_CONST) {
-    uint8_t value = code[0].ret_const.a ? 255 : 0;
-
-    for (size_t i = 0; i < resolution; i ++) {
-      for (size_t j = 0; j < resolution; j += 16) {
-        vxbu_store(tile + stride * i + j, vxbu_dup(value));
-      }
-    }
-
-    return;
-  }
-
-  if (resolution == 16) {
-    rasterize(
-        scratch,
-        code_len,
-        code,
-        xmin,
-        xlen,
-        ymax,
-        ylen,
-        stride,
-        tile
-      );
-
-    return;
-  }
-
-  if (resolution == 32) {
+  if (resolution == 128) {
     for (size_t t = 0; t < 4; t ++) {
       size_t i = t / 2;
       size_t j = t % 2;
-      rasterize(
-          scratch,
+
+      draw_tile(
+          arena,
+          code_arena,
+          geometry,
           code_len,
           code,
           xmin + 0.5f * xlen * (float) j,
           0.5f * xlen,
           ymax - 0.5f * ylen * (float) i,
           0.5f * ylen,
+          resolution / 2,
           stride,
-          tile + resolution / 2 * stride * i + resolution / 2 * j
+          tile + stride * resolution / 2 * i + resolution / 2 * j
         );
     }
 
@@ -713,39 +620,85 @@ static void render_tile(
   Inst * sub_code[16];
 
   specialize(
-      scratch,
+      arena,
+      &code_arena,
+      geometry,
       code_len,
       code,
       xmin,
       xlen,
       ymax,
       ylen,
-      depth,
       sub_code_len,
       sub_code
     );
+
+  if (resolution == 64) {
+    for (size_t t = 0; t < 16; t ++) {
+      size_t i = t / 4;
+      size_t j = t % 4;
+
+      if (sub_code[t][0].op == OP_RET_CONST) {
+        fill_tile_16(
+            sub_code[t],
+            stride,
+            tile + stride * resolution / 4 * i + resolution / 4 * j
+          );
+
+        continue;
+      }
+
+      draw_tile_16(
+          arena,
+          geometry,
+          sub_code_len[t],
+          sub_code[t],
+          xmin + 0.25f * xlen * (float) j,
+          0.25f * xlen,
+          ymax - 0.25f * ylen * (float) i,
+          0.25f * ylen,
+          stride,
+          tile + stride * resolution / 4 * i + resolution / 4 * j
+        );
+    }
+
+    return;
+  }
 
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;
     size_t j = t % 4;
 
-    render_tile(
-        scratch,
+    if (sub_code[t][0].op == OP_RET_CONST) {
+      fill_tile(
+          sub_code[t],
+          resolution / 4,
+          stride,
+          tile + stride * resolution / 4 * i + resolution / 4 * j
+        );
+
+      continue;
+    }
+
+    draw_tile(
+        arena,
+        code_arena,
+        geometry,
         sub_code_len[t],
         sub_code[t],
         xmin + 0.25f * xlen * (float) j,
         0.25f * xlen,
         ymax - 0.25f * ylen * (float) i,
         0.25f * ylen,
-        depth + 1,
         resolution / 4,
         stride,
-        tile + resolution / 4 * stride * i + resolution / 4 * j
+        tile + stride * resolution / 4 * i + resolution / 4 * j
       );
   }
 }
 
 void render(
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
@@ -756,32 +709,85 @@ void render(
     uint8_t image[resolution][resolution]
   )
 {
-  // cf MAX_SPECIALIZATION_LEVELS
-  assert(256 <= resolution && resolution <= 8192);
+  assert(512 <= resolution && resolution <= 4096);
   assert((resolution & (resolution - 1)) == 0);
 
-#pragma omp parallel for
-  for (size_t t = 0; t < 16; t ++) {
-    size_t i = t / 4;
-    size_t j = t % 4;
+  size_t sub_code_len[64];
+  Inst * sub_code[64];
 
-    Scratch scratch;
-    scratch_init(&scratch);
+#pragma omp parallel
+  {
+    Arena arena;
+    Arena code_arena;
+    arena_init(&arena, 1 << 19);
+    arena_init(&code_arena, 1 << 17);
 
-    render_tile(
-        &scratch,
-        code_len,
-        code,
-        xmin + 0.25f * (xmax - xmin) * (float) j,
-        0.25f * (xmax - xmin),
-        ymax - 0.25f * (ymax - ymin) * (float) i,
-        0.25f * (ymax - ymin),
-        0,
-        resolution / 4,
-        resolution,
-        &image[resolution / 4 * i][resolution / 4 * j]
-      );
+#pragma omp for schedule(dynamic, 1)
+    for (size_t t = 0; t < 4; t ++) {
+      size_t i = t / 2;
+      size_t j = t % 2;
 
-    scratch_drop(&scratch);
+      specialize(
+          arena,
+          &code_arena,
+          geometry,
+          code_len,
+          code,
+          xmin + 0.5f * (xmax - xmin) * (float) j,
+          0.5f * (xmax - xmin),
+          ymax - 0.5f * (ymax - ymin) * (float) i,
+          0.5f * (ymax - ymin),
+          &sub_code_len[16 * t],
+          &sub_code[16 * t]
+        );
+    }
+
+#pragma omp for schedule(dynamic, 1)
+    for (size_t t = 0; t < 64; t ++) {
+      // we've sliced the image into 64 regions
+      //
+      //      0  1  2  3  4  5  6  7
+      //   ┌────────────────────────
+      // 0 │ 00 01 02 03 16 17 18 19
+      // 1 │ 04 05 06 07
+      // 2 │ 08 09 10 11
+      // 3 │ 12 13 14 15
+      // 4 │ 32          48 49 50 51
+      // 5 │ 36          52
+      // 6 │ 40          56
+      // 7 │ 44          60
+
+      size_t i = t / 16 / 2 * 4 + t % 16 / 4;
+      size_t j = t / 16 % 2 * 4 + t % 16 % 4;
+
+      if (sub_code[t][0].op == OP_RET_CONST) {
+        fill_tile(
+            sub_code[t],
+            resolution / 8,
+            resolution,
+            &image[resolution / 8 * i][resolution / 8 * j]
+          );
+
+        continue;
+      }
+
+      draw_tile(
+          arena,
+          code_arena,
+          geometry,
+          sub_code_len[t],
+          sub_code[t],
+          xmin + 0.125f * (xmax - xmin) * (float) j,
+          0.125f * (xmax - xmin),
+          ymax - 0.125f * (ymax - ymin) * (float) i,
+          0.125f * (ymax - ymin),
+          resolution / 8,
+          resolution,
+          &image[resolution / 8 * i][resolution / 8 * j]
+        );
+    }
+
+    arena_drop(&arena);
+    arena_drop(&code_arena);
   }
 }

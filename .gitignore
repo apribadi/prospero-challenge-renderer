@@ -1,0 +1,7 @@
+*.o
+*.s
+*.swp
+pcr
+prospero.c
+prospero.pgm
+prospero.vm

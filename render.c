@@ -77,11 +77,10 @@ static uint16_t pq_pop(PQ * t) {
     if (b < n) {
       uint16_t u = data[a];
       uint16_t v = data[b];
-      size_t c = u >= v ? a : b;
       uint16_t w = u >= v ? u : v;
       if (w <= x) break;
       data[i] = w;
-      i = c;
+      i = u >= v ? a : b;
       continue;
     }
 
@@ -409,9 +408,10 @@ static size_t op2_affine(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t ii,
   for (size_t h = 0; h < 4; h ++) {
     vxsf y = vxsf_load(&ep->y[4 * h]);
     vxsf v = vxsf_mul(y, b);
-    for (size_t k = 0; k < 4; k ++) {
-      vzsf_store(&sp[ii].floats[64 * h + 16 * k], vzsf_add(u, vzsf_dup(vxsf_get(v, k))));
-    }
+    vzsf_store(&sp[ii].floats[64 * h + 16 * 0], vzsf_add(u, vzsf_dup(vxsf_get(v, 0))));
+    vzsf_store(&sp[ii].floats[64 * h + 16 * 1], vzsf_add(u, vzsf_dup(vxsf_get(v, 1))));
+    vzsf_store(&sp[ii].floats[64 * h + 16 * 2], vzsf_add(u, vzsf_dup(vxsf_get(v, 2))));
+    vzsf_store(&sp[ii].floats[64 * h + 16 * 3], vzsf_add(u, vzsf_dup(vxsf_get(v, 3))));
   }
   return op2_dispatch(cp, ep, sp, tp, ii + 1);
 }

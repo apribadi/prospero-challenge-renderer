@@ -31,10 +31,6 @@ static inline vxsf vxsf_load(float p[4]) {
   return vld1q_f32(p);
 }
 
-static inline void vxsf_store(float p[4], vxsf x) {
-  vst1q_f32(p, x);
-}
-
 static inline vxbu vxbu_load(uint8_t p[16]) {
   return vld1q_u8(p);
 }
@@ -159,24 +155,6 @@ static inline vzsf vzsf_or(vzsf x, vzsf y) {
   }};
 }
 
-static inline vzsf vzsf_bitselect(vzsu p, vzsf x, vzsf y) {
-  return (float32x4x4_t) {{
-    vbslq_f32(p.val[0], x.val[0], y.val[0]),
-    vbslq_f32(p.val[1], x.val[1], y.val[1]),
-    vbslq_f32(p.val[2], x.val[2], y.val[2]),
-    vbslq_f32(p.val[3], x.val[3], y.val[3]),
-  }};
-}
-
-static inline vzsu vzsu_or(vzsu x, vzsu y) {
-  return (uint32x4x4_t) {{
-    vorrq_u32(x.val[0], y.val[0]),
-    vorrq_u32(x.val[1], y.val[1]),
-    vorrq_u32(x.val[2], y.val[2]),
-    vorrq_u32(x.val[3], y.val[3])
-  }};
-}
-
 static inline vzbu vzbu_or(vzbu x, vzbu y) {
   return (uint8x16x4_t) {{
     vorrq_u8(x.val[0], y.val[0]),
@@ -228,15 +206,6 @@ static inline vzsu vzsf_lt(vzsf x, vzsf y) {
     vcltq_f32(x.val[1], y.val[1]),
     vcltq_f32(x.val[2], y.val[2]),
     vcltq_f32(x.val[3], y.val[3])
-  }};
-}
-
-static inline vzsf vzsf_min(vzsf x, vzsf y) {
-  return (float32x4x4_t) {{
-    vminq_f32(x.val[0], y.val[0]),
-    vminq_f32(x.val[1], y.val[1]),
-    vminq_f32(x.val[2], y.val[2]),
-    vminq_f32(x.val[3], y.val[3])
   }};
 }
 

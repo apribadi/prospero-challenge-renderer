@@ -22,14 +22,14 @@ Highlights:
 
   | Resolution | 4 Firestorm     | 4 Firestorm + 4 Icestorm |
   | ---------- | --------------- | ------------------------ |
-  | 512        | 0.47 ms / frame | 0.42 ms / frame          |
-  | 1024       | 0.58 ms / frame | 0.46 ms / frame          |
-  | 2048       | 0.96 ms / frame | 0.76 ms / frame          |
-  | 4096       | 1.47 ms / frame | 1.21 ms / frame          |
+  | 512        | 0.47 ms / frame | 0.43 ms / frame          |
+  | 1024       | 0.58 ms / frame | 0.47 ms / frame          |
+  | 2048       | 0.96 ms / frame | 0.78 ms / frame          |
+  | 4096       | 1.47 ms / frame | 1.19 ms / frame          |
 
   On this machine with eight cores and a 1024 resolution, it is approximately
-  6x faster than Janos Meny's renderer (the next fastest CPU renderer) and
-  approximately 16x faster than Fidget in JIT mode.
+  5x faster than Janos Meny's renderer (the next fastest CPU renderer) and
+  approximately 15x faster than Fidget in JIT mode.
 
 - Propagating the outer inequality `... <= 0` inwards generates more boolean
   expressions that are constant in subregions. This allows us to prune strictly

@@ -39,6 +39,10 @@ static inline void vxbu_store(uint8_t p[16], vxbu x) {
   vst1q_u8(p, x);
 }
 
+static inline vxbu vxbu_dup(uint8_t x) {
+  return vdupq_n_u8(x);
+}
+
 static inline float vxsf_get(vxsf x, size_t i) {
   return x[i];
 }

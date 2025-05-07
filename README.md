@@ -22,10 +22,10 @@ Highlights:
 
   | Resolution | 4 Firestorm     | 4 Firestorm + 4 Icestorm |
   | ---------- | --------------- | ------------------------ |
-  | 512        | 0.47 ms / frame | 0.43 ms / frame          |
-  | 1024       | 0.58 ms / frame | 0.47 ms / frame          |
-  | 2048       | 0.96 ms / frame | 0.78 ms / frame          |
-  | 4096       | 1.47 ms / frame | 1.19 ms / frame          |
+  | 512        | 0.49 ms / frame | 0.43 ms / frame          |
+  | 1024       | 0.58 ms / frame | 0.48 ms / frame          |
+  | 2048       | 0.97 ms / frame | 0.75 ms / frame          |
+  | 4096       | 1.45 ms / frame | 1.16 ms / frame          |
 
   On this machine with eight cores and a 1024 resolution, it is approximately
   5x faster than Janos Meny's renderer (the next fastest CPU renderer) and

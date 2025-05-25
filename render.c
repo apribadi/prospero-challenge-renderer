@@ -609,7 +609,6 @@ static void specialize(
       if (inst.op == OP_RET) {
         if (! sp[inst.ret.x].is_f[t] && ! sp[inst.ret.x].is_t[t]) {
           pq_insert(gray, sp[inst.ret.x].link[t]);
-          pq_insert(gray, sp[inst.ret.x].link[t]);
         }
       }
     }

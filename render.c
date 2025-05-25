@@ -252,32 +252,32 @@ static Inst * scratch_code(Scratch * t, size_t i, size_t j, size_t capacity) {
 typedef struct {
   vzsf lo;
   vzsf hi;
-} range_;
+} Range;
 
-static inline range_ add_(range_ x, range_ y) {
-  return (range_) {
+static inline Range range_add(Range x, Range y) {
+  return (Range) {
     vzsf_add(x.lo, y.lo),
     vzsf_add(x.hi, y.hi),
   };
 }
 
-static inline range_ add_n_(range_ x, float y) {
-  return (range_) {
+static inline Range range_add_n(Range x, float y) {
+  return (Range) {
     vzsf_add_n(x.lo, y),
     vzsf_add_n(x.hi, y),
   };
 }
 
-static inline range_ mul_n_(range_ x, float y) {
+static inline Range range_mul_n(Range x, float y) {
   vzsu p = vzsu_dup(y < 0.0f ? UINT32_MAX : 0);
-  return (range_) {
+  return (Range) {
     vzsf_mul_n(vzsf_select(p, x.hi, x.lo), y),
     vzsf_mul_n(vzsf_select(p, x.lo, x.hi), y),
   };
 }
 
-static inline range_ square_(range_ x) {
-  return (range_) {
+static inline Range range_square(Range x) {
+  return (Range) {
     vzsf_or(
       vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(VZSF_ZERO, x.lo)),
       vzsf_and(vzsf_mul(x.hi, x.hi), vzsf_lt(x.hi, VZSF_ZERO))),
@@ -337,10 +337,10 @@ static size_t op1_line(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   float b = line.b;
   float c = line.c;
 
-  range_ x = { env1_xmin(ep), env1_xmax(ep) };
-  range_ y = { env1_ymin(ep), env1_ymax(ep) };
+  Range x = { env1_xmin(ep), env1_xmax(ep) };
+  Range y = { env1_ymin(ep), env1_ymax(ep) };
 
-  range_ z = add_(mul_n_(x, a), mul_n_(y, b));
+  Range z = range_add(range_mul_n(x, a), range_mul_n(y, b));
 
   vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
   vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
@@ -358,14 +358,14 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   float e = oval.e;
   float f = oval.f;
 
-  range_ x = { env1_xmin(ep), env1_xmax(ep) };
-  range_ y = { env1_ymin(ep), env1_ymax(ep) };
+  Range x = { env1_xmin(ep), env1_xmax(ep) };
+  Range y = { env1_ymin(ep), env1_ymax(ep) };
 
-  range_ z =
-    add_n_(
-      add_(
-        square_(add_n_(add_(mul_n_(x, a), mul_n_(y, b)), c)),
-        square_(add_n_(add_(mul_n_(x, d), mul_n_(y, e)), f))),
+  Range z =
+    range_add_n(
+      range_add(
+        range_square(range_add_n(range_add(range_mul_n(x, a), range_mul_n(y, b)), c)),
+        range_square(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
       -1.0f);
 
   vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);

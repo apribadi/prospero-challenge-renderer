@@ -264,7 +264,7 @@ static inline range_ add_(range_ x, range_ y) {
 static inline range_ add_n_(range_ x, float y) {
   return (range_) {
     vzsf_add_n(x.lo, y),
-    vzsf_add_n(x.hi, y)
+    vzsf_add_n(x.hi, y),
   };
 }
 
@@ -369,11 +369,17 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
       -1.0f);
 
   vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
-  vzsf u = vzsf_select(p, vzsf_neg(z.lo), z.lo);
-  vzsf v = vzsf_select(p, vzsf_neg(z.hi), z.hi);
+  vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
+  vzsf v = vzsf_select(p, vzsf_neg(z.lo), z.hi);
 
   vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
   vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
+
+  /*
+  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsu_dup(0)));
+  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsu_dup(0)));
+  */
+
   vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
@@ -487,6 +493,7 @@ static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
 
     vxbu_store(&sp[pc].bools[16 * i], w);
   }
+
   return op2_dispatch(cp, ep, sp, tp, pc + 1);
 }
 

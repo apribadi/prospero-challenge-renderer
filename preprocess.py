@@ -197,7 +197,7 @@ for i, ins in enumerate(code):
         case "oval", a, b, c, d, e, f, outside:
             k = push(oval, (a, b, c, d, e, f))
             o = "true" if outside else "false"
-            print(f"  [{i}] = {{ OP_OVAL, .conic = {{ {k}, {o} }} }},")
+            print(f"  [{i}] = {{ OP_OVAL, .oval = {{ {k}, {o} }} }},")
         case "and", x, y:
             print(f"  [{i}] = {{ OP_AND, .and = {{ {x}, {y} }} }},")
         case "or", x, y:
@@ -216,7 +216,7 @@ for (a, b, c) in line:
 
 print(f"}};")
 print(f"")
-print(f"static Line PROSPERO_OVAL[{len(oval)}] = {{")
+print(f"static Oval PROSPERO_OVAL[{len(oval)}] = {{")
 
 for (a, b, c, d, e, f) in oval:
     print(f"  {{ {a:+.9e}f, {b:+.9e}f, {c:+.9e}f, {d:+.9e}f, {e:+.9e}f, {f:+.9e}f }},")
@@ -225,9 +225,9 @@ print(f"}};")
 print(f"")
 print(f"static Prog PROSPERO = {{")
 print(f"  .code_len = {len(code)},")
-print(f"  .code = &PROSPERO_CODE,")
+print(f"  .code = PROSPERO_CODE,")
 print(f"  .line_len = {len(line)},")
-print(f"  .line = &PROSPERO_LINE,")
+print(f"  .line = PROSPERO_LINE,")
 print(f"  .oval_len = {len(oval)},")
-print(f"  .oval = &PROSPERO_OVAL,")
+print(f"  .oval = PROSPERO_OVAL,")
 print(f"}};")

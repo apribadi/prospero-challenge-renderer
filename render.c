@@ -340,11 +340,11 @@ static size_t op1_line(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   range_ x = { env1_xmin(ep), env1_xmax(ep) };
   range_ y = { env1_ymin(ep), env1_ymax(ep) };
 
-  range_ z = add_(mul_n(x, a), mul_n(y, b));
+  range_ z = add_(mul_n_(x, a), mul_n_(y, b));
 
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
-  vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
+  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
+  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
+  vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
@@ -353,7 +353,7 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   Oval oval = ep->oval[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
-  float c = oval.c
+  float c = oval.c;
   float d = oval.d;
   float e = oval.e;
   float f = oval.f;
@@ -372,42 +372,42 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   vzsf u = vzsf_select(p, vzsf_neg(z.lo), z.lo);
   vzsf v = vzsf_select(p, vzsf_neg(z.hi), z.hi);
 
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
-  vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
+  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
+  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
+  vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
 static size_t op1_and(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vxbu x_is_f = vxbu_load(sp[inst.and.x].bools.is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.and.x].bools.is_t);
-  vyhu x_link = vyhu_load(sp[inst.and.x].bools.link);
-  vxbu y_is_f = vxbu_load(sp[inst.and.y].bools.is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.and.y].bools.is_t);
-  vyhu y_link = vyhu_load(sp[inst.and.y].bools.link);
-  vxbu_store(sp[pc].bools.is_f, vxbu_or(x_is_f, y_is_f));
-  vxbu_store(sp[pc].bools.is_t, vxbu_and(x_is_t, y_is_t));
+  vxbu x_is_f = vxbu_load(sp[inst.and.x].is_f);
+  vxbu x_is_t = vxbu_load(sp[inst.and.x].is_t);
+  vyhu x_link = vyhu_load(sp[inst.and.x].link);
+  vxbu y_is_f = vxbu_load(sp[inst.and.y].is_f);
+  vxbu y_is_t = vxbu_load(sp[inst.and.y].is_t);
+  vyhu y_link = vyhu_load(sp[inst.and.y].link);
+  vxbu_store(sp[pc].is_f, vxbu_or(x_is_f, y_is_f));
+  vxbu_store(sp[pc].is_t, vxbu_and(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
   link = vyhu_select(vxbu_vyhu_movemask(x_is_t), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_t), x_link, link);
-  vyhu_store(sp[pc].bools.link, link);
+  vyhu_store(sp[pc].link, link);
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
 static size_t op1_or(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vxbu x_is_f = vxbu_load(sp[inst.or.x].bools.is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.or.x].bools.is_t);
-  vyhu x_link = vyhu_load(sp[inst.or.x].bools.link);
-  vxbu y_is_f = vxbu_load(sp[inst.or.y].bools.is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.or.y].bools.is_t);
-  vyhu y_link = vyhu_load(sp[inst.or.y].bools.link);
-  vxbu_store(sp[pc].bools.is_f, vxbu_and(x_is_f, y_is_f));
-  vxbu_store(sp[pc].bools.is_t, vxbu_or(x_is_t, y_is_t));
+  vxbu x_is_f = vxbu_load(sp[inst.or.x].is_f);
+  vxbu x_is_t = vxbu_load(sp[inst.or.x].is_t);
+  vyhu x_link = vyhu_load(sp[inst.or.x].link);
+  vxbu y_is_f = vxbu_load(sp[inst.or.y].is_f);
+  vxbu y_is_t = vxbu_load(sp[inst.or.y].is_t);
+  vyhu y_link = vyhu_load(sp[inst.or.y].link);
+  vxbu_store(sp[pc].is_f, vxbu_and(x_is_f, y_is_f));
+  vxbu_store(sp[pc].is_t, vxbu_or(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
   link = vyhu_select(vxbu_vyhu_movemask(x_is_f), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_f), x_link, link);
-  vyhu_store(sp[pc].bools.link, link);
+  vyhu_store(sp[pc].link, link);
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
@@ -465,7 +465,7 @@ static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
   Oval oval = ep->oval[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
-  float c = oval.c
+  float c = oval.c;
   float d = oval.d;
   float e = oval.e;
   float f = oval.f;
@@ -478,8 +478,8 @@ static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
     vzsf z =
       vzsf_add_n(
         vzsf_add(
-          vzsf_square(vzsf_add_n(mul_n_(x, a), y * b + c)),
-          vzsf_square(vzsf_add_n(mul_n_(x, d), y * e + f))),
+          vzsf_square(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
+          vzsf_square(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
         -1.0f);
 
     vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
@@ -607,9 +607,9 @@ static void specialize(
       rev[sub_code_len ++] = k;
       Inst inst = code[k];
       if (inst.op == OP_RET) {
-        if (! sp[inst.ret.x].bools.is_f[t] && ! sp[inst.ret.x].bools.is_t[t]) {
-          pq_insert(gray, sp[inst.ret.x].bools.link[t]);
-          pq_insert(gray, sp[inst.ret.x].bools.link[t]);
+        if (! sp[inst.ret.x].is_f[t] && ! sp[inst.ret.x].is_t[t]) {
+          pq_insert(gray, sp[inst.ret.x].link[t]);
+          pq_insert(gray, sp[inst.ret.x].link[t]);
         }
       }
     }
@@ -620,23 +620,13 @@ static void specialize(
       Inst inst = code[k];
 
       switch (inst.op) {
-      case OP_HYPOT2:
-        pq_insert(gray, inst.hypot2.x);
-        pq_insert(gray, inst.hypot2.y);
-        break;
-      case OP_LE_CONST:
-        pq_insert(gray, inst.le_const.x);
-        break;
-      case OP_GE_CONST:
-        pq_insert(gray, inst.ge_const.x);
-        break;
       case OP_AND:
-        pq_insert(gray, sp[inst.and.x].bools.link[t]);
-        pq_insert(gray, sp[inst.and.y].bools.link[t]);
+        pq_insert(gray, sp[inst.and.x].link[t]);
+        pq_insert(gray, sp[inst.and.y].link[t]);
         break;
       case OP_OR:
-        pq_insert(gray, sp[inst.or.x].bools.link[t]);
-        pq_insert(gray, sp[inst.or.y].bools.link[t]);
+        pq_insert(gray, sp[inst.or.x].link[t]);
+        pq_insert(gray, sp[inst.or.y].link[t]);
         break;
       default:
         break;
@@ -655,31 +645,21 @@ static void specialize(
       Inst inst = code[k];
 
       switch (inst.op) {
-      case OP_HYPOT2:
-        inst.hypot2.x = map[inst.hypot2.x];
-        inst.hypot2.y = map[inst.hypot2.y];
-        break;
-      case OP_LE_CONST:
-        inst.le_const.x = map[inst.le_const.x];
-        break;
-      case OP_GE_CONST:
-        inst.ge_const.x = map[inst.ge_const.x];
-        break;
       case OP_AND:
-        inst.and.x = map[sp[inst.and.x].bools.link[t]];
-        inst.and.y = map[sp[inst.and.y].bools.link[t]];
+        inst.and.x = map[sp[inst.and.x].link[t]];
+        inst.and.y = map[sp[inst.and.y].link[t]];
         break;
       case OP_OR:
-        inst.or.x = map[sp[inst.or.x].bools.link[t]];
-        inst.or.y = map[sp[inst.or.y].bools.link[t]];
+        inst.or.x = map[sp[inst.or.x].link[t]];
+        inst.or.y = map[sp[inst.or.y].link[t]];
         break;
       case OP_RET:
-        if (sp[inst.ret.x].bools.is_f[t]) {
+        if (sp[inst.ret.x].is_f[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { false } };
-        } else if (sp[inst.ret.x].bools.is_t[t]) {
+        } else if (sp[inst.ret.x].is_t[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { true } };
         } else {
-          inst.ret.x = map[sp[inst.ret.x].bools.link[t]];
+          inst.ret.x = map[sp[inst.ret.x].link[t]];
         }
         break;
       default:
@@ -710,7 +690,7 @@ static void render_tile(
   )
 {
   if (code_len == 1 && code[0].op == OP_RET_CONST) {
-    uint8_t value = code[0].ret_const.a ? 255 : 0;
+    uint8_t value = code[0].ret_const.value ? 255 : 0;
 
     for (size_t i = 0; i < resolution; i ++) {
       for (size_t j = 0; j < resolution; j += 16) {

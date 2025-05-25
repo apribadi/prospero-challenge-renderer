@@ -482,7 +482,9 @@ static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
           vzsf_square(vzsf_add_n(mul_n_(x, d), y * e + f))),
         -1.0f);
 
-    vxbu w = vzsu_vxbu_movemask(vzsf_le(z, t));
+    vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+    vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
+
     vxbu_store(&sp[pc].bools[16 * i], w);
   }
   return op2_dispatch(cp, ep, sp, tp, pc + 1);
@@ -521,6 +523,8 @@ static void rasterize(
     Scratch * scratch,
     size_t code_len,
     Inst code[code_len],
+    Line * line,
+    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
@@ -539,6 +543,10 @@ static void rasterize(
   }};
 
   Env2 * ep = scratch_env2(scratch, code_len);
+
+  ep->line = line;
+  ep->oval = oval;
+
   Slot2 * sp = ep->slots;
 
   float dx = 0.0625f * xlen;
@@ -562,6 +570,8 @@ static void specialize(
     Scratch * scratch,
     size_t code_len,
     Inst code[code_len],
+    Line * line,
+    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
@@ -572,12 +582,16 @@ static void specialize(
   )
 {
   Env1 * ep = scratch_env1(scratch, code_len);
-  Slot1 * sp = ep->slots;
+
+  ep->line = line;
+  ep->oval = oval;
 
   for (size_t k = 0; k < 5; k ++) {
     ep->x[k] = xmin + 0.25f * xlen * (float) k;
     ep->y[k] = ymax - 0.25f * ylen * (float) k;
   }
+
+  Slot1 * sp = ep->slots;
 
   analyze(code, ep, sp);
 
@@ -683,6 +697,8 @@ static void render_tile(
     Scratch * scratch,
     size_t code_len,
     Inst code[code_len],
+    Line * line,
+    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
@@ -710,6 +726,8 @@ static void render_tile(
         scratch,
         code_len,
         code,
+        line,
+        oval,
         xmin,
         xlen,
         ymax,
@@ -729,6 +747,8 @@ static void render_tile(
           scratch,
           code_len,
           code,
+          line,
+          oval,
           xmin + 0.5f * xlen * (float) j,
           0.5f * xlen,
           ymax - 0.5f * ylen * (float) i,
@@ -748,6 +768,8 @@ static void render_tile(
       scratch,
       code_len,
       code,
+      line,
+      oval,
       xmin,
       xlen,
       ymax,
@@ -765,6 +787,8 @@ static void render_tile(
         scratch,
         sub_code_len[t],
         sub_code[t],
+        line,
+        oval,
         xmin + 0.25f * xlen * (float) j,
         0.25f * xlen,
         ymax - 0.25f * ylen * (float) i,
@@ -778,8 +802,7 @@ static void render_tile(
 }
 
 void render(
-    size_t code_len,
-    Inst code[code_len],
+    Prog * prog,
     float xmin,
     float xmax,
     float ymin,
@@ -802,8 +825,10 @@ void render(
 
     render_tile(
         &scratch,
-        code_len,
-        code,
+        prog->code_len,
+        prog->code,
+        prog->line,
+        prog->oval,
         xmin + 0.25f * (xmax - xmin) * (float) j,
         0.25f * (xmax - xmin),
         ymax - 0.25f * (ymax - ymin) * (float) i,

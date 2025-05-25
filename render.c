@@ -374,12 +374,6 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
 
   vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
   vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
-
-  /*
-  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsu_dup(0)));
-  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsu_dup(0)));
-  */
-
   vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
   return op1_dispatch(cp, ep, sp, tp, pc + 1);

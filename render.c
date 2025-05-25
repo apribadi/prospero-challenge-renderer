@@ -138,8 +138,6 @@ typedef struct {
   size_t capacity;
   float x[5];
   float y[5];
-  Line * line;
-  Oval * oval;
   Slot1 * slots;
 } Env1;
 
@@ -288,17 +286,12 @@ static inline Range range_square(Range x) {
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
 typedef struct Tbl1_ {
-  size_t (* ops[6])(Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
+  size_t (* ops[6])(Inst *, Env1 *, Line *, Oval *, Slot1 *, struct Tbl1_ *, size_t, Inst);
 } Tbl1;
 
-static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc) {
-  // cp - code pointer
-  // ep - environment pointer
-  // sp - stack pointer
-  // tp - table pointer
-  // pc - program counter
+static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp, Tbl1 * tp, size_t pc) {
   Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
+  return tp->ops[inst.op](cp, ep, lp, op, sp, tp, pc, inst);
 }
 
 static inline vzsf env1_xmin(Env1 * ep) {
@@ -331,8 +324,21 @@ static inline vzsf env1_ymax(Env1 * ep) {
       vxsf_dup(vxsf_get(y, 3)));
 }
 
-static size_t op1_line(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  Line line = ep->line[inst.line.index];
+#define ARGS1 \
+  __attribute__((unused)) Inst * cp, \
+  __attribute__((unused)) Env1 * ep, \
+  __attribute__((unused)) Line * lp, \
+  __attribute__((unused)) Oval * op, \
+  __attribute__((unused)) Slot1 * sp, \
+  __attribute__((unused)) Tbl1 * tp, \
+  __attribute__((unused)) size_t pc, \
+  __attribute__((unused)) Inst inst
+
+#define DISPATCH1 \
+  do { return op1_dispatch(cp, ep, lp, op, sp, tp, pc + 1); } while (0)
+
+static size_t op1_line(ARGS1) {
+  Line line = lp[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -346,11 +352,11 @@ static size_t op1_line(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
   vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH1;
 }
 
-static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  Oval oval = ep->oval[inst.oval.index];
+static size_t op1_oval(ARGS1) {
+  Oval oval = op[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
   float c = oval.c;
@@ -376,10 +382,10 @@ static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, I
   vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
   vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
 
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH1;
 }
 
-static size_t op1_and(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
+static size_t op1_and(ARGS1) {
   vxbu x_is_f = vxbu_load(sp[inst.and.x].is_f);
   vxbu x_is_t = vxbu_load(sp[inst.and.x].is_t);
   vyhu x_link = vyhu_load(sp[inst.and.x].link);
@@ -392,10 +398,10 @@ static size_t op1_and(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, In
   link = vyhu_select(vxbu_vyhu_movemask(x_is_t), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_t), x_link, link);
   vyhu_store(sp[pc].link, link);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH1;
 }
 
-static size_t op1_or(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
+static size_t op1_or(ARGS1) {
   vxbu x_is_f = vxbu_load(sp[inst.or.x].is_f);
   vxbu x_is_t = vxbu_load(sp[inst.or.x].is_t);
   vyhu x_link = vyhu_load(sp[inst.or.x].link);
@@ -408,18 +414,18 @@ static size_t op1_or(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Ins
   link = vyhu_select(vxbu_vyhu_movemask(x_is_f), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_f), x_link, link);
   vyhu_store(sp[pc].link, link);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH1;
 }
 
-static size_t op1_ret(Inst *, Env1 *, Slot1 *, Tbl1 *, size_t, Inst inst) {
+static size_t op1_ret(ARGS1) {
   return inst.ret.x;
 }
 
-static size_t op1_ret_const(Inst *, Env1 *, Slot1 *, Tbl1 *, size_t pc, Inst) {
+static size_t op1_ret_const(ARGS1) {
   return pc;
 }
 
-static void analyze(Inst * cp, Env1 * ep, Slot1 * sp) {
+static void analyze(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp) {
   static Tbl1 TBL1 = {{
     op1_line,
     op1_oval,
@@ -429,7 +435,7 @@ static void analyze(Inst * cp, Env1 * ep, Slot1 * sp) {
     op1_ret_const,
   }};
 
-  (void) op1_dispatch(cp, ep, sp, &TBL1, 0);
+  (void) op1_dispatch(cp, ep, lp, op, sp, &TBL1, 0);
 }
 
 // -------- RASTERIZE A 256 PIXEL REGION --------
@@ -584,9 +590,6 @@ static void specialize(
 {
   Env1 * ep = scratch_env1(scratch, code_len);
 
-  ep->line = line;
-  ep->oval = oval;
-
   for (size_t k = 0; k < 5; k ++) {
     ep->x[k] = xmin + 0.25f * xlen * (float) k;
     ep->y[k] = ymax - 0.25f * ylen * (float) k;
@@ -594,7 +597,7 @@ static void specialize(
 
   Slot1 * sp = ep->slots;
 
-  analyze(code, ep, sp);
+  analyze(code, ep, line, oval, sp);
 
   uint16_t * rev = scratch_rev(scratch, code_len);
   uint16_t * map = scratch_map(scratch, code_len);

@@ -1,10 +1,8 @@
 #pragma once
 
 typedef enum {
-  OP_AFFINE,
-  OP_HYPOT2,
-  OP_LE_CONST,
-  OP_GE_CONST,
+  OP_LINE,
+  OP_OVAL,
   OP_AND,
   OP_OR,
   OP_RET,
@@ -14,25 +12,53 @@ typedef enum {
 typedef struct {
   Op op;
   union {
-    struct { float a; float b; float c; } affine;
-    struct { uint16_t x; uint16_t y; } hypot2;
-    struct { uint16_t x; float a; } le_const;
-    struct { uint16_t x; float a; } ge_const;
+    struct { uint16_t index; } line;
+    struct { uint16_t index; bool outside; } oval;
     struct { uint16_t x; uint16_t y; } and;
     struct { uint16_t x; uint16_t y; } or;
     struct { uint16_t x; } ret;
-    struct { bool a; } ret_const;
+    struct { bool value; } ret_const;
   };
 } Inst;
 
+// ax + by + c <= 0
+
+typedef struct {
+  float a;
+  float b;
+  float c;
+} Line;
+
+// (ax + by + c) ** 2 + (dx + ey + f) ** 2 <= 1
+//
+// or, if `outside`, then instead >= 1
+
+typedef struct {
+  float a;
+  float b;
+  float c;
+  float d;
+  float e;
+  float f;
+} Oval;
+
+typedef struct {
+  size_t code_len;
+  Inst * code;
+  size_t line_len;
+  Line * line;
+  size_t oval_len;
+  Oval * oval;
+} Prog;
+
 // PRECONDITIONS:
 //
-// - `code` must be a valid program
+// - `prog` must be a valid program
 // - `resolution` must be a power of two between 256 and 8192
+// - ...
 
 void render(
-    size_t code_len,
-    Inst code[code_len],
+    Prog * prog,
     float xmin,
     float xmax,
     float ymin,

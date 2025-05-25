@@ -55,8 +55,16 @@ static inline vxsf vxsf_add(vxsf x, vxsf y) {
   return vaddq_f32(x, y);
 }
 
+static inline vxsf vxsf_add_n(vxsf x, float y) {
+  return vaddq_f32(x, vdupq_n_f32(y));
+}
+
 static inline vxsf vxsf_mul(vxsf x, vxsf y) {
   return vmulq_f32(x, y);
+}
+
+static inline vxsf vxsf_mul_n(vxsf x, float y) {
+  return vmulq_n_f32(x, y);
 }
 
 static inline vxbu vxbu_and(vxbu x, vxbu y) {
@@ -70,7 +78,7 @@ static inline vxbu vxbu_or(vxbu x, vxbu y) {
 static inline vyhu vxbu_vyhu_movemask(vxbu x) {
   return (uint16x8x2_t) {{
     vzip1q_u8(x, x),
-    vzip2q_u8(x, x)
+    vzip2q_u8(x, x),
   }};
 }
 
@@ -85,14 +93,14 @@ static inline void vyhu_store(uint16_t p[16], vyhu x) {
 static inline vyhu vyhu_dup(uint16_t x) {
   return (uint16x8x2_t) {{
     vdupq_n_u16(x),
-    vdupq_n_u16(x)
+    vdupq_n_u16(x),
   }};
 }
 
-static inline vyhu vyhu_bitselect(vyhu p, vyhu x, vyhu y) {
+static inline vyhu vyhu_select(vyhu p, vyhu x, vyhu y) {
   return (uint16x8x2_t) {{
     vbslq_u16(p.val[0], x.val[0], y.val[0]),
-    vbslq_u16(p.val[1], x.val[1], y.val[1])
+    vbslq_u16(p.val[1], x.val[1], y.val[1]),
   }};
 }
 
@@ -100,7 +108,7 @@ static const vzsf VZSF_ZERO = {{
   { 0.0f, 0.0f, 0.0f, 0.0f },
   { 0.0f, 0.0f, 0.0f, 0.0f },
   { 0.0f, 0.0f, 0.0f, 0.0f },
-  { 0.0f, 0.0f, 0.0f, 0.0f }
+  { 0.0f, 0.0f, 0.0f, 0.0f },
 }};
 
 static inline vzsf vzsf_load(float p[16]) {
@@ -127,36 +135,8 @@ static inline vzbu vzbu_from_vxbu_x4(vxbu x0, vxbu x1, vxbu x2, vxbu x3) {
   return (uint8x16x4_t) {{ x0, x1, x2, x3 }};
 }
 
-static inline vzsf vzsf_dup(float x) {
-  return (float32x4x4_t) {{ vdupq_n_f32(x), vdupq_n_f32(x), vdupq_n_f32(x), vdupq_n_f32(x) }};
-}
-
 static inline vzbu vzbu_dup(uint8_t x) {
   return (uint8x16x4_t) {{ vdupq_n_u8(x), vdupq_n_u8(x), vdupq_n_u8(x), vdupq_n_u8(x) }};
-}
-
-static inline vxbu vzsu_vxbu_movemask(vzsu x) {
-  uint16x8_t a = vuzp1q_u16(vreinterpretq_u16_u32(x.val[0]), vreinterpretq_u16_u32(x.val[1]));
-  uint16x8_t b = vuzp1q_u16(vreinterpretq_u16_u32(x.val[2]), vreinterpretq_u16_u32(x.val[3]));
-  return vuzp1q_u8(vreinterpretq_u8_u16(a), vreinterpretq_u8_u16(b));
-}
-
-static inline vzsf vzsf_and(vzsf x, vzsu y) {
-  return (float32x4x4_t) {{
-    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[0]), y.val[0])),
-    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[1]), y.val[1])),
-    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[2]), y.val[2])),
-    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[3]), y.val[3]))
-  }};
-}
-
-static inline vzsf vzsf_or(vzsf x, vzsf y) {
-  return (float32x4x4_t) {{
-    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[0]), vreinterpretq_u32_f32(y.val[0]))),
-    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[1]), vreinterpretq_u32_f32(y.val[1]))),
-    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[2]), vreinterpretq_u32_f32(y.val[2]))),
-    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[3]), vreinterpretq_u32_f32(y.val[3])))
-  }};
 }
 
 static inline vzbu vzbu_or(vzbu x, vzbu y) {
@@ -164,7 +144,7 @@ static inline vzbu vzbu_or(vzbu x, vzbu y) {
     vorrq_u8(x.val[0], y.val[0]),
     vorrq_u8(x.val[1], y.val[1]),
     vorrq_u8(x.val[2], y.val[2]),
-    vorrq_u8(x.val[3], y.val[3])
+    vorrq_u8(x.val[3], y.val[3]),
   }};
 }
 
@@ -173,7 +153,57 @@ static inline vzbu vzbu_and(vzbu x, vzbu y) {
     vandq_u8(x.val[0], y.val[0]),
     vandq_u8(x.val[1], y.val[1]),
     vandq_u8(x.val[2], y.val[2]),
-    vandq_u8(x.val[3], y.val[3])
+    vandq_u8(x.val[3], y.val[3]),
+  }};
+}
+
+static inline vxbu vzsu_vxbu_movemask(vzsu x) {
+  uint16x8_t a = vuzp1q_u16(vreinterpretq_u16_u32(x.val[0]), vreinterpretq_u16_u32(x.val[1]));
+  uint16x8_t b = vuzp1q_u16(vreinterpretq_u16_u32(x.val[2]), vreinterpretq_u16_u32(x.val[3]));
+  return vuzp1q_u8(vreinterpretq_u8_u16(a), vreinterpretq_u8_u16(b));
+}
+
+static inline vzsu vzsu_dup(uint32_t x) {
+  return (uint32x4x4_t) {{ vdupq_n_u32(x), vdupq_n_u32(x), vdupq_n_u32(x), vdupq_n_u32(x) }};
+}
+
+static inline vzsf vzsf_select(vzsu p, vzsf x, vzsf y) {
+  return (float32x4x4_t) {{
+    vbslq_f32(p.val[0], x.val[0], y.val[0]),
+    vbslq_f32(p.val[1], x.val[1], y.val[1]),
+    vbslq_f32(p.val[2], x.val[2], y.val[2]),
+    vbslq_f32(p.val[3], x.val[3], y.val[3]),
+  }};
+}
+
+static inline vzsf vzsf_dup(float x) {
+  return (float32x4x4_t) {{ vdupq_n_f32(x), vdupq_n_f32(x), vdupq_n_f32(x), vdupq_n_f32(x) }};
+}
+
+static inline vzsf vzsf_and(vzsf x, vzsu y) {
+  return (float32x4x4_t) {{
+    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[0]), y.val[0])),
+    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[1]), y.val[1])),
+    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[2]), y.val[2])),
+    vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(x.val[3]), y.val[3])),
+  }};
+}
+
+static inline vzsf vzsf_or(vzsf x, vzsf y) {
+  return (float32x4x4_t) {{
+    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[0]), vreinterpretq_u32_f32(y.val[0]))),
+    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[1]), vreinterpretq_u32_f32(y.val[1]))),
+    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[2]), vreinterpretq_u32_f32(y.val[2]))),
+    vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(x.val[3]), vreinterpretq_u32_f32(y.val[3]))),
+  }};
+}
+
+static inline vzsf vzsf_neg(vzsf x) {
+  return (float32x4x4_t) {{
+    vnegq_f32(x.val[0]),
+    vnegq_f32(x.val[1]),
+    vnegq_f32(x.val[2]),
+    vnegq_f32(x.val[3]),
   }};
 }
 
@@ -182,7 +212,16 @@ static inline vzsf vzsf_add(vzsf x, vzsf y) {
     vaddq_f32(x.val[0], y.val[0]),
     vaddq_f32(x.val[1], y.val[1]),
     vaddq_f32(x.val[2], y.val[2]),
-    vaddq_f32(x.val[3], y.val[3])
+    vaddq_f32(x.val[3], y.val[3]),
+  }};
+}
+
+static inline vzsf vzsf_add_n(vzsf x, float y) {
+  return (float32x4x4_t) {{
+    vaddq_f32(x.val[0], vdupq_n_f32(y)),
+    vaddq_f32(x.val[1], vdupq_n_f32(y)),
+    vaddq_f32(x.val[2], vdupq_n_f32(y)),
+    vaddq_f32(x.val[3], vdupq_n_f32(y)),
   }};
 }
 
@@ -191,8 +230,21 @@ static inline vzsf vzsf_mul(vzsf x, vzsf y) {
     vmulq_f32(x.val[0], y.val[0]),
     vmulq_f32(x.val[1], y.val[1]),
     vmulq_f32(x.val[2], y.val[2]),
-    vmulq_f32(x.val[3], y.val[3])
+    vmulq_f32(x.val[3], y.val[3]),
   }};
+}
+
+static inline vzsf vzsf_mul_n(vzsf x, float y) {
+  return (float32x4x4_t) {{
+    vmulq_n_f32(x.val[0], y),
+    vmulq_n_f32(x.val[1], y),
+    vmulq_n_f32(x.val[2], y),
+    vmulq_n_f32(x.val[3], y),
+  }};
+}
+
+static inline vzsf vzsf_square(vzsf x) {
+  return vzsf_mul(x, x);
 }
 
 static inline vzsu vzsf_le(vzsf x, vzsf y) {
@@ -200,7 +252,7 @@ static inline vzsu vzsf_le(vzsf x, vzsf y) {
     vcleq_f32(x.val[0], y.val[0]),
     vcleq_f32(x.val[1], y.val[1]),
     vcleq_f32(x.val[2], y.val[2]),
-    vcleq_f32(x.val[3], y.val[3])
+    vcleq_f32(x.val[3], y.val[3]),
   }};
 }
 
@@ -213,11 +265,20 @@ static inline vzsu vzsf_lt(vzsf x, vzsf y) {
   }};
 }
 
+static inline vzsf vzsf_min(vzsf x, vzsf y) {
+  return (float32x4x4_t) {{
+    vminq_f32(x.val[0], y.val[0]),
+    vminq_f32(x.val[1], y.val[1]),
+    vminq_f32(x.val[2], y.val[2]),
+    vminq_f32(x.val[3], y.val[3]),
+  }};
+}
+
 static inline vzsf vzsf_max(vzsf x, vzsf y) {
   return (float32x4x4_t) {{
     vmaxq_f32(x.val[0], y.val[0]),
     vmaxq_f32(x.val[1], y.val[1]),
     vmaxq_f32(x.val[2], y.val[2]),
-    vmaxq_f32(x.val[3], y.val[3])
+    vmaxq_f32(x.val[3], y.val[3]),
   }};
 }

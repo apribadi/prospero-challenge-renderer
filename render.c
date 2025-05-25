@@ -128,22 +128,18 @@ static void buf_inst_drop(BufInst * t) {
 
 // -------- SLOT AND ENVIRONMENT TYPES FOR INTERPRETER LOOPS --------
 
-typedef union {
-  struct {
-    float min[16];
-    float max[16];
-  } floats;
-  struct {
-    uint8_t is_f[16];
-    uint8_t is_t[16];
-    uint16_t link[16];
-  } bools;
+typedef struct {
+  uint8_t is_f[16];
+  uint8_t is_t[16];
+  uint16_t link[16];
 } Slot1;
 
 typedef struct {
   size_t capacity;
   float x[5];
   float y[5];
+  Line * line;
+  Oval * oval;
   Slot1 * slots;
 } Env1;
 
@@ -156,8 +152,7 @@ static void env1_drop(Env1 * t) {
   free(t->slots);
 }
 
-typedef union {
-  float floats[256];
+typedef struct {
   uint8_t bools[256];
 } Slot2;
 
@@ -165,6 +160,8 @@ typedef struct {
   size_t capacity;
   float x[16];
   float y[16];
+  Line * line;
+  Oval * oval;
   Slot2 * slots;
 } Env2;
 
@@ -250,10 +247,48 @@ static Inst * scratch_code(Scratch * t, size_t i, size_t j, size_t capacity) {
   return code->data;
 }
 
+// -------- 16-wide interval arithmetic --------
+
+typedef struct {
+  vzsf lo;
+  vzsf hi;
+} range_;
+
+static inline range_ add_(range_ x, range_ y) {
+  return (range_) {
+    vzsf_add(x.lo, y.lo),
+    vzsf_add(x.hi, y.hi),
+  };
+}
+
+static inline range_ add_n_(range_ x, float y) {
+  return (range_) {
+    vzsf_add_n(x.lo, y),
+    vzsf_add_n(x.hi, y)
+  };
+}
+
+static inline range_ mul_n_(range_ x, float y) {
+  vzsu p = vzsu_dup(y < 0.0f ? UINT32_MAX : 0);
+  return (range_) {
+    vzsf_mul_n(vzsf_select(p, x.hi, x.lo), y),
+    vzsf_mul_n(vzsf_select(p, x.lo, x.hi), y),
+  };
+}
+
+static inline range_ square_(range_ x) {
+  return (range_) {
+    vzsf_or(
+      vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(VZSF_ZERO, x.lo)),
+      vzsf_and(vzsf_mul(x.hi, x.hi), vzsf_lt(x.hi, VZSF_ZERO))),
+    vzsf_max(vzsf_mul(x.lo, x.lo), vzsf_mul(x.hi, x.hi)),
+  };
+}
+
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
 typedef struct Tbl1_ {
-  size_t (* ops[8])(Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
+  size_t (* ops[6])(Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
 } Tbl1;
 
 static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc) {
@@ -266,72 +301,81 @@ static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, s
   return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
 }
 
-static size_t op1_affine(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  float a = inst.affine.a;
-  float b = inst.affine.b;
-  float c = inst.affine.c;
-  vxsf xmin = vxsf_load(&ep->x[0]);
-  vxsf xmax = vxsf_load(&ep->x[1]);
-  vxsf ymin = vxsf_load(&ep->y[1]);
-  vxsf ymax = vxsf_load(&ep->y[0]);
-  vxsf umin = vxsf_add(vxsf_mul(a < 0.0f ? xmax : xmin, vxsf_dup(a)), vxsf_dup(c));
-  vxsf umax = vxsf_add(vxsf_mul(a < 0.0f ? xmin : xmax, vxsf_dup(a)), vxsf_dup(c));
-  vxsf vmin = vxsf_mul(b < 0.0f ? ymax : ymin, vxsf_dup(b));
-  vxsf vmax = vxsf_mul(b < 0.0f ? ymin : ymax, vxsf_dup(b));
-  vzsf wmin =
+static inline vzsf env1_xmin(Env1 * ep) {
+  vxsf x = vxsf_load(&ep->x[0]);
+  return vzsf_from_vxsf_x4(x, x, x, x);
+}
+
+static inline vzsf env1_xmax(Env1 * ep) {
+  vxsf x = vxsf_load(&ep->x[1]);
+  return vzsf_from_vxsf_x4(x, x, x, x);
+}
+
+static inline vzsf env1_ymin(Env1 * ep) {
+  vxsf y = vxsf_load(&ep->y[1]);
+  return
     vzsf_from_vxsf_x4(
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 0))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 1))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 2))),
-      vxsf_add(umin, vxsf_dup(vxsf_get(vmin, 3))));
-  vzsf_store(sp[pc].floats.min, wmin);
-  vzsf wmax =
+      vxsf_dup(vxsf_get(y, 0)),
+      vxsf_dup(vxsf_get(y, 1)),
+      vxsf_dup(vxsf_get(y, 2)),
+      vxsf_dup(vxsf_get(y, 3)));
+}
+
+static inline vzsf env1_ymax(Env1 * ep) {
+  vxsf y = vxsf_load(&ep->y[0]);
+  return
     vzsf_from_vxsf_x4(
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 0))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 1))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 2))),
-      vxsf_add(umax, vxsf_dup(vxsf_get(vmax, 3))));
-  vzsf_store(sp[pc].floats.max, wmax);
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
+      vxsf_dup(vxsf_get(y, 0)),
+      vxsf_dup(vxsf_get(y, 1)),
+      vxsf_dup(vxsf_get(y, 2)),
+      vxsf_dup(vxsf_get(y, 3)));
 }
 
-static size_t op1_hypot2(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.hypot2.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.hypot2.x].floats.max);
-  vzsf ymin = vzsf_load(sp[inst.hypot2.y].floats.min);
-  vzsf ymax = vzsf_load(sp[inst.hypot2.y].floats.max);
-  vzsf umin =
-    vzsf_or(
-      vzsf_and(vzsf_mul(xmin, xmin), vzsf_le(VZSF_ZERO, xmin)),
-      vzsf_and(vzsf_mul(xmax, xmax), vzsf_le(xmax, VZSF_ZERO)));
-  vzsf vmin =
-    vzsf_or(
-      vzsf_and(vzsf_mul(ymin, ymin), vzsf_le(VZSF_ZERO, ymin)),
-      vzsf_and(vzsf_mul(ymax, ymax), vzsf_le(ymax, VZSF_ZERO)));
-  vzsf_store(sp[pc].floats.min, vzsf_add(umin, vmin));
-  vzsf umax = vzsf_max(vzsf_mul(xmin, xmin), vzsf_mul(xmax, xmax));
-  vzsf vmax = vzsf_max(vzsf_mul(ymin, ymin), vzsf_mul(ymax, ymax));
-  vzsf_store(sp[pc].floats.max, vzsf_add(umax, vmax));
-  return op1_dispatch(cp, ep, sp, tp, pc + 1);
-}
+static size_t op1_line(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
+  Line line = ep->line[inst.line.index];
+  float a = line.a;
+  float b = line.b;
+  float c = line.c;
 
-static size_t op1_le_const(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.le_const.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.le_const.x].floats.max);
-  vzsf a = vzsf_dup(inst.le_const.a);
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(a, xmin)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(xmax, a)));
+  range_ x = { env1_xmin(ep), env1_xmax(ep) };
+  range_ y = { env1_ymin(ep), env1_ymax(ep) };
+
+  range_ z = add_(mul_n(x, a), mul_n(y, b));
+
+  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
+  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
   vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
+
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
-static size_t op1_ge_const(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
-  vzsf xmin = vzsf_load(sp[inst.ge_const.x].floats.min);
-  vzsf xmax = vzsf_load(sp[inst.ge_const.x].floats.max);
-  vzsf a = vzsf_dup(inst.ge_const.a);
-  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(xmax, a)));
-  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(a, xmin)));
+static size_t op1_oval(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Inst inst) {
+  Oval oval = ep->oval[inst.oval.index];
+  float a = oval.a;
+  float b = oval.b;
+  float c = oval.c
+  float d = oval.d;
+  float e = oval.e;
+  float f = oval.f;
+
+  range_ x = { env1_xmin(ep), env1_xmax(ep) };
+  range_ y = { env1_ymin(ep), env1_ymax(ep) };
+
+  range_ z =
+    add_n_(
+      add_(
+        square_(add_n_(add_(mul_n_(x, a), mul_n_(y, b)), c)),
+        square_(add_n_(add_(mul_n_(x, d), mul_n_(y, e)), f))),
+      -1.0f);
+
+  vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+  vzsf u = vzsf_select(p, vzsf_neg(z.lo), z.lo);
+  vzsf v = vzsf_select(p, vzsf_neg(z.hi), z.hi);
+
+  vxbu_store(sp[pc].bools.is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
+  vxbu_store(sp[pc].bools.is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
   vyhu_store(sp[pc].bools.link, vyhu_dup((uint16_t) pc));
+
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
@@ -345,8 +389,8 @@ static size_t op1_and(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, In
   vxbu_store(sp[pc].bools.is_f, vxbu_or(x_is_f, y_is_f));
   vxbu_store(sp[pc].bools.is_t, vxbu_and(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(x_is_t), y_link, link);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(y_is_t), x_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(x_is_t), y_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(y_is_t), x_link, link);
   vyhu_store(sp[pc].bools.link, link);
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
@@ -361,8 +405,8 @@ static size_t op1_or(Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc, Ins
   vxbu_store(sp[pc].bools.is_f, vxbu_and(x_is_f, y_is_f));
   vxbu_store(sp[pc].bools.is_t, vxbu_or(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(x_is_f), y_link, link);
-  link = vyhu_bitselect(vxbu_vyhu_movemask(y_is_f), x_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(x_is_f), y_link, link);
+  link = vyhu_select(vxbu_vyhu_movemask(y_is_f), x_link, link);
   vyhu_store(sp[pc].bools.link, link);
   return op1_dispatch(cp, ep, sp, tp, pc + 1);
 }
@@ -377,14 +421,12 @@ static size_t op1_ret_const(Inst *, Env1 *, Slot1 *, Tbl1 *, size_t pc, Inst) {
 
 static void analyze(Inst * cp, Env1 * ep, Slot1 * sp) {
   static Tbl1 TBL1 = {{
-    op1_affine,
-    op1_hypot2,
-    op1_le_const,
-    op1_ge_const,
+    op1_line,
+    op1_oval,
     op1_and,
     op1_or,
     op1_ret,
-    op1_ret_const
+    op1_ret_const,
   }};
 
   (void) op1_dispatch(cp, ep, sp, &TBL1, 0);
@@ -393,7 +435,7 @@ static void analyze(Inst * cp, Env1 * ep, Slot1 * sp) {
 // -------- RASTERIZE A 256 PIXEL REGION --------
 
 typedef struct Tbl2_ {
-  size_t (* ops[8])(Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
+  size_t (* ops[6])(Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
 } Tbl2;
 
 static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc) {
@@ -401,55 +443,47 @@ static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, s
   return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
 }
 
-static size_t op2_affine(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
+static size_t op2_line(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
+  Line line = ep->line[inst.line.index];
+  float a = line.a;
+  float b = line.b;
+  float c = line.c;
+
   vzsf x = vzsf_load(ep->x);
-  vzsf u = vzsf_add(vzsf_mul(x, vzsf_dup(inst.affine.a)), vzsf_dup(inst.affine.c));
-  for (size_t h = 0; h < 4; h ++) {
-    vxsf y = vxsf_load(&ep->y[4 * h]);
-    vxsf v = vxsf_mul(y, vxsf_dup(inst.affine.b));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 0], vzsf_add(u, vzsf_dup(vxsf_get(v, 0))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 1], vzsf_add(u, vzsf_dup(vxsf_get(v, 1))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 2], vzsf_add(u, vzsf_dup(vxsf_get(v, 2))));
-    vzsf_store(&sp[pc].floats[64 * h + 16 * 3], vzsf_add(u, vzsf_dup(vxsf_get(v, 3))));
+
+  for (size_t i = 0; i < 16; i ++) {
+    float y = ep->y[i];
+    vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
+    vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
+    vxbu_store(&sp[pc].bools[16 * i], w);
   }
+
   return op2_dispatch(cp, ep, sp, tp, pc + 1);
 }
 
-static size_t op2_hypot2(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t k = 0; k < 16; k ++) {
-    vzsf x = vzsf_load(&sp[inst.hypot2.x].floats[16 * k]);
-    vzsf y = vzsf_load(&sp[inst.hypot2.y].floats[16 * k]);
-    vzsf_store(&sp[pc].floats[16 * k], vzsf_add(vzsf_mul(x, x), vzsf_mul(y, y)));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
+static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
+  Oval oval = ep->oval[inst.oval.index];
+  float a = oval.a;
+  float b = oval.b;
+  float c = oval.c
+  float d = oval.d;
+  float e = oval.e;
+  float f = oval.f;
 
-static size_t op2_le_const(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzsf x0 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 0]);
-    vzsf x1 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 1]);
-    vzsf x2 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 2]);
-    vzsf x3 = vzsf_load(&sp[inst.le_const.x].floats[64 * h + 16 * 3]);
-    vxbu u0 = vzsu_vxbu_movemask(vzsf_le(x0, vzsf_dup(inst.le_const.a)));
-    vxbu u1 = vzsu_vxbu_movemask(vzsf_le(x1, vzsf_dup(inst.le_const.a)));
-    vxbu u2 = vzsu_vxbu_movemask(vzsf_le(x2, vzsf_dup(inst.le_const.a)));
-    vxbu u3 = vzsu_vxbu_movemask(vzsf_le(x3, vzsf_dup(inst.le_const.a)));
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_from_vxbu_x4(u0, u1, u2, u3));
-  }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
-}
+  vzsf x = vzsf_load(ep->x);
 
-static size_t op2_ge_const(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzsf x0 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 0]);
-    vzsf x1 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 1]);
-    vzsf x2 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 2]);
-    vzsf x3 = vzsf_load(&sp[inst.ge_const.x].floats[64 * h + 16 * 3]);
-    vxbu u0 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x0));
-    vxbu u1 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x1));
-    vxbu u2 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x2));
-    vxbu u3 = vzsu_vxbu_movemask(vzsf_le(vzsf_dup(inst.ge_const.a), x3));
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_from_vxbu_x4(u0, u1, u2, u3));
+  for (size_t i = 0; i < 16; i ++) {
+    float y = ep->y[i];
+
+    vzsf z =
+      vzsf_add_n(
+        vzsf_add(
+          vzsf_square(vzsf_add_n(mul_n_(x, a), y * b + c)),
+          vzsf_square(vzsf_add_n(mul_n_(x, d), y * e + f))),
+        -1.0f);
+
+    vxbu w = vzsu_vxbu_movemask(vzsf_le(z, t));
+    vxbu_store(&sp[pc].bools[16 * i], w);
   }
   return op2_dispatch(cp, ep, sp, tp, pc + 1);
 }
@@ -478,7 +512,7 @@ static size_t op2_ret(Inst *, Env2 *, Slot2 *, Tbl2 *, size_t, Inst inst) {
 
 static size_t op2_ret_const(Inst *, Env2 *, Slot2 * sp, Tbl2 *, size_t pc, Inst inst) {
   for (size_t h = 0; h < 4; h ++) {
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_dup(inst.ret_const.a ? 255 : 0));
+    vzbu_store(&sp[pc].bools[64 * h], vzbu_dup(inst.ret_const.value ? UINT8_MAX : 0));
   }
   return pc;
 }
@@ -496,14 +530,12 @@ static void rasterize(
   )
 {
   static Tbl2 TBL2 = {{
-    op2_affine,
-    op2_hypot2,
-    op2_le_const,
-    op2_ge_const,
+    op2_line,
+    op2_oval,
     op2_and,
     op2_or,
     op2_ret,
-    op2_ret_const
+    op2_ret_const,
   }};
 
   Env2 * ep = scratch_env2(scratch, code_len);

@@ -158,8 +158,6 @@ typedef struct {
   size_t capacity;
   float x[16];
   float y[16];
-  Line * line;
-  Oval * oval;
   Slot2 * slots;
 } Env2;
 
@@ -441,16 +439,29 @@ static void analyze(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp) {
 // -------- RASTERIZE A 256 PIXEL REGION --------
 
 typedef struct Tbl2_ {
-  size_t (* ops[6])(Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
+  size_t (* ops[6])(Inst *, Env2 *, Line *, Oval *, Slot2 *, struct Tbl2_ *, size_t, Inst);
 } Tbl2;
 
-static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc) {
+static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Line * lp, Oval * op, Slot2 * sp, Tbl2 * tp, size_t pc) {
   Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, sp, tp, pc, inst);
+  return tp->ops[inst.op](cp, ep, lp, op, sp, tp, pc, inst);
 }
 
-static size_t op2_line(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  Line line = ep->line[inst.line.index];
+#define ARGS2 \
+  __attribute__((unused)) Inst * cp, \
+  __attribute__((unused)) Env2 * ep, \
+  __attribute__((unused)) Line * lp, \
+  __attribute__((unused)) Oval * op, \
+  __attribute__((unused)) Slot2 * sp, \
+  __attribute__((unused)) Tbl2 * tp, \
+  __attribute__((unused)) size_t pc, \
+  __attribute__((unused)) Inst inst
+
+#define DISPATCH2 \
+  do { return op2_dispatch(cp, ep, lp, op, sp, tp, pc + 1); } while (0)
+
+static size_t op2_line(ARGS2) {
+  Line line = lp[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -464,11 +475,11 @@ static size_t op2_line(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
     vxbu_store(&sp[pc].bools[16 * i], w);
   }
 
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH2;
 }
 
-static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
-  Oval oval = ep->oval[inst.oval.index];
+static size_t op2_oval(ARGS2) {
+  Oval oval = op[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
   float c = oval.c;
@@ -494,35 +505,38 @@ static size_t op2_oval(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, I
     vxbu_store(&sp[pc].bools[16 * i], w);
   }
 
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
+  DISPATCH2;
 }
 
-static size_t op2_and(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
+static size_t op2_and(ARGS2) {
   for (size_t h = 0; h < 4; h ++) {
     vzbu x = vzbu_load(&sp[inst.and.x].bools[64 * h]);
     vzbu y = vzbu_load(&sp[inst.and.y].bools[64 * h]);
     vzbu_store(&sp[pc].bools[64 * h], vzbu_and(x, y));
   }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
+
+  DISPATCH2;
 }
 
-static size_t op2_or(Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc, Inst inst) {
+static size_t op2_or(ARGS2) {
   for (size_t h = 0; h < 4; h ++) {
     vzbu x = vzbu_load(&sp[inst.or.x].bools[64 * h]);
     vzbu y = vzbu_load(&sp[inst.or.y].bools[64 * h]);
     vzbu_store(&sp[pc].bools[64 * h], vzbu_or(x, y));
   }
-  return op2_dispatch(cp, ep, sp, tp, pc + 1);
+
+  DISPATCH2;
 }
 
-static size_t op2_ret(Inst *, Env2 *, Slot2 *, Tbl2 *, size_t, Inst inst) {
+static size_t op2_ret(ARGS2) {
   return inst.ret.x;
 }
 
-static size_t op2_ret_const(Inst *, Env2 *, Slot2 * sp, Tbl2 *, size_t pc, Inst inst) {
+static size_t op2_ret_const(ARGS2) {
   for (size_t h = 0; h < 4; h ++) {
     vzbu_store(&sp[pc].bools[64 * h], vzbu_dup(inst.ret_const.value ? UINT8_MAX : 0));
   }
+
   return pc;
 }
 
@@ -551,9 +565,6 @@ static void rasterize(
 
   Env2 * ep = scratch_env2(scratch, code_len);
 
-  ep->line = line;
-  ep->oval = oval;
-
   Slot2 * sp = ep->slots;
 
   float dx = 0.0625f * xlen;
@@ -564,7 +575,7 @@ static void rasterize(
     ep->y[k] = ymax - 0.5f * dy - dy * (float) k;
   }
 
-  size_t result = op2_dispatch(code, ep, sp, &TBL2, 0);
+  size_t result = op2_dispatch(code, ep, line, oval, sp, &TBL2, 0);
 
   for (size_t k = 0; k < 16; k ++) {
     memcpy(tile + stride * k, &sp[result].bools[16 * k], 16);

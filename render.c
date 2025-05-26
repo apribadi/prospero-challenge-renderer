@@ -151,7 +151,7 @@ static void env1_drop(Env1 * t) {
 }
 
 typedef struct {
-  uint8_t bools[256];
+  uint8_t bits[32];
 } Slot2;
 
 typedef struct {
@@ -275,8 +275,8 @@ static inline Range range_mul_n(Range x, float y) {
 static inline Range range_square(Range x) {
   return (Range) {
     vzsf_or(
-      vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(VZSF_ZERO, x.lo)),
-      vzsf_and(vzsf_mul(x.hi, x.hi), vzsf_lt(x.hi, VZSF_ZERO))),
+      vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(vzsf_dup(0.0f), x.lo)),
+      vzsf_and(vzsf_mul(x.hi, x.hi), vzsf_lt(x.hi, vzsf_dup(0.0f)))),
     vzsf_max(vzsf_mul(x.lo, x.lo), vzsf_mul(x.hi, x.hi)),
   };
 }
@@ -468,11 +468,17 @@ static size_t op2_line(ARGS2) {
 
   vzsf x = vzsf_load(ep->x);
 
-  for (size_t i = 0; i < 16; i ++) {
-    float y = ep->y[i];
-    vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
-    vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
-    vxbu_store(&sp[pc].bools[16 * i], w);
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_dup(0);
+
+    for (size_t i = 0; i < 8; i ++) {
+      float y = ep->y[8 * h + i];
+      vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
+      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+    }
+
+    vxbu_store(&sp[pc].bits[16 * h], r);
   }
 
   DISPATCH2;
@@ -489,41 +495,43 @@ static size_t op2_oval(ARGS2) {
 
   vzsf x = vzsf_load(ep->x);
 
-  for (size_t i = 0; i < 16; i ++) {
-    float y = ep->y[i];
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_dup(0);
 
-    vzsf z =
-      vzsf_add_n(
-        vzsf_add(
-          vzsf_square(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
-          vzsf_square(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
-        -1.0f);
+    for (size_t i = 0; i < 8; i ++) {
+      float y = ep->y[8 * h + i];
 
-    vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
-    vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
+      vzsf z =
+        vzsf_add_n(
+          vzsf_add(
+            vzsf_square(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
+            vzsf_square(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
+          -1.0f);
 
-    vxbu_store(&sp[pc].bools[16 * i], w);
+      vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
+
+      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+    }
+
+    vxbu_store(&sp[pc].bits[16 * h], r);
   }
 
   DISPATCH2;
 }
 
 static size_t op2_and(ARGS2) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu x = vzbu_load(&sp[inst.and.x].bools[64 * h]);
-    vzbu y = vzbu_load(&sp[inst.and.y].bools[64 * h]);
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_and(x, y));
-  }
+  vybu x = vybu_load(sp[inst.and.x].bits);
+  vybu y = vybu_load(sp[inst.and.y].bits);
+  vybu_store(sp[pc].bits, vybu_and(x, y));
 
   DISPATCH2;
 }
 
 static size_t op2_or(ARGS2) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu x = vzbu_load(&sp[inst.or.x].bools[64 * h]);
-    vzbu y = vzbu_load(&sp[inst.or.y].bools[64 * h]);
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_or(x, y));
-  }
+  vybu x = vybu_load(sp[inst.or.x].bits);
+  vybu y = vybu_load(sp[inst.or.y].bits);
+  vybu_store(sp[pc].bits, vybu_or(x, y));
 
   DISPATCH2;
 }
@@ -533,9 +541,7 @@ static size_t op2_ret(ARGS2) {
 }
 
 static size_t op2_ret_const(ARGS2) {
-  for (size_t h = 0; h < 4; h ++) {
-    vzbu_store(&sp[pc].bools[64 * h], vzbu_dup(inst.ret_const.value ? UINT8_MAX : 0));
-  }
+  vybu_store(sp[pc].bits, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
 
   return pc;
 }
@@ -577,8 +583,11 @@ static void rasterize(
 
   size_t result = op2_dispatch(code, ep, line, oval, sp, &TBL2, 0);
 
-  for (size_t k = 0; k < 16; k ++) {
-    memcpy(tile + stride * k, &sp[result].bools[16 * k], 16);
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_load(&sp[result].bits[16 * h]);
+    for (size_t i = 0; i < 8; i ++) {
+      vxbu_store(tile + stride * (8 * h + i), vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
+    }
   }
 }
 

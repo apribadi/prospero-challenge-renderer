@@ -20,12 +20,13 @@
 //
 // vzsf - 512-bit vector of (16) 32-bit floats
 
-typedef uint8x16_t    vxbu;
-typedef uint8x16x4_t  vzbu;
-typedef uint16x8x2_t  vyhu;
 typedef float32x4_t   vxsf;
 typedef float32x4x4_t vzsf;
+typedef uint16x8x2_t  vyhu;
 typedef uint32x4x4_t  vzsu;
+typedef uint8x16_t    vxbu;
+typedef uint8x16x2_t  vybu;
+typedef uint8x16x4_t  vzbu;
 
 static inline vxsf vxsf_load(float p[4]) {
   return vld1q_f32(p);
@@ -42,6 +43,10 @@ static inline void vxbu_store(uint8_t p[16], vxbu x) {
 static inline vxbu vxbu_dup(uint8_t x) {
   return vdupq_n_u8(x);
 }
+
+#define vxbu_shr(x, i) vshrq_n_u8(x, i)
+
+#define vxbu_shl(x, i) vshlq_n_u8(x, i)
 
 static inline float vxsf_get(vxsf x, size_t i) {
   return x[i];
@@ -65,6 +70,14 @@ static inline vxsf vxsf_mul(vxsf x, vxsf y) {
 
 static inline vxsf vxsf_mul_n(vxsf x, float y) {
   return vmulq_n_f32(x, y);
+}
+
+static inline vxbu vxbu_test(vxbu x, vxbu y) {
+  return vtstq_u8(x, y);
+}
+
+static inline vxbu vxbu_select(vxbu p, vxbu x, vxbu y) {
+  return vbslq_u8(p, x, y);
 }
 
 static inline vxbu vxbu_and(vxbu x, vxbu y) {
@@ -104,12 +117,31 @@ static inline vyhu vyhu_select(vyhu p, vyhu x, vyhu y) {
   }};
 }
 
-static const vzsf VZSF_ZERO = {{
-  { 0.0f, 0.0f, 0.0f, 0.0f },
-  { 0.0f, 0.0f, 0.0f, 0.0f },
-  { 0.0f, 0.0f, 0.0f, 0.0f },
-  { 0.0f, 0.0f, 0.0f, 0.0f },
-}};
+static inline vybu vybu_load(uint8_t p[32]) {
+  return vld1q_u8_x2(p);
+}
+
+static inline void vybu_store(uint8_t p[32], vybu x) {
+  vst1q_u8_x2(p, x);
+}
+
+static inline vybu vybu_dup(uint8_t x) {
+  return (uint8x16x2_t) {{ vdupq_n_u8(x), vdupq_n_u8(x) }};
+}
+
+static inline vybu vybu_and(vybu x, vybu y) {
+  return (uint8x16x2_t) {{
+    vandq_u8(x.val[0], y.val[0]),
+    vandq_u8(x.val[1], y.val[1]),
+  }};
+}
+
+static inline vybu vybu_or(vybu x, vybu y) {
+  return (uint8x16x2_t) {{
+    vorrq_u8(x.val[0], y.val[0]),
+    vorrq_u8(x.val[1], y.val[1]),
+  }};
+}
 
 static inline vzsf vzsf_load(float p[16]) {
   return vld1q_f32_x4(p);

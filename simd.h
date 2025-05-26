@@ -275,7 +275,7 @@ static inline vzsf vzsf_mul_n(vzsf x, float y) {
   }};
 }
 
-static inline vzsf vzsf_square(vzsf x) {
+static inline vzsf vzsf_sq(vzsf x) {
   return vzsf_mul(x, x);
 }
 

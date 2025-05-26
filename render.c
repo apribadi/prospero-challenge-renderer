@@ -272,7 +272,7 @@ static inline Range range_mul_n(Range x, float y) {
   };
 }
 
-static inline Range range_square(Range x) {
+static inline Range range_sq(Range x) {
   return (Range) {
     vzsf_or(
       vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(vzsf_dup(0.0f), x.lo)),
@@ -368,8 +368,8 @@ static size_t op1_oval(ARGS1) {
   Range z =
     range_add_n(
       range_add(
-        range_square(range_add_n(range_add(range_mul_n(x, a), range_mul_n(y, b)), c)),
-        range_square(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
+        range_sq(range_add_n(range_add(range_mul_n(x, a), range_mul_n(y, b)), c)),
+        range_sq(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
       -1.0f);
 
   vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
@@ -504,8 +504,8 @@ static size_t op2_oval(ARGS2) {
       vzsf z =
         vzsf_add_n(
           vzsf_add(
-            vzsf_square(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
-            vzsf_square(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
           -1.0f);
 
       vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
@@ -570,7 +570,6 @@ static void rasterize(
   }};
 
   Env2 * ep = scratch_env2(scratch, code_len);
-
   Slot2 * sp = ep->slots;
 
   float dx = 0.0625f * xlen;
@@ -586,7 +585,8 @@ static void rasterize(
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_load(&sp[result].bits[16 * h]);
     for (size_t i = 0; i < 8; i ++) {
-      vxbu_store(tile + stride * (8 * h + i), vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
+      size_t k = 8 * h + i;
+      vxbu_store(tile + stride * k, vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
     }
   }
 }

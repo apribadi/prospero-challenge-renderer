@@ -11,8 +11,6 @@
 #include "simd.h"
 #include "render.h"
 
-#define MAX_SPECIALIZATION_LEVELS 3
-
 // -------- ARENA ALLOCATOR --------
 //
 // a crude arena
@@ -137,8 +135,8 @@ static uint16_t pq_pop(PQ * t) {
 // -------- SLOT AND ENVIRONMENT TYPES FOR INTERPRETER LOOPS --------
 
 typedef struct {
-  Line * line;
-  Oval * oval;
+  Line * lines;
+  Ellipse * ellipses;
 } Shapes;
 
 typedef struct {
@@ -253,7 +251,7 @@ static inline vzsf env1_ymax(Env1 * ep) {
   do { return op1_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
 
 static size_t op1_line(ARGS1) {
-  Line line = shapes.line[inst.line.index];
+  Line line = shapes.lines[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -270,14 +268,14 @@ static size_t op1_line(ARGS1) {
   DISPATCH1;
 }
 
-static size_t op1_oval(ARGS1) {
-  Oval oval = shapes.oval[inst.oval.index];
-  float a = oval.a;
-  float b = oval.b;
-  float c = oval.c;
-  float d = oval.d;
-  float e = oval.e;
-  float f = oval.f;
+static size_t op1_ellipse(ARGS1) {
+  Ellipse ellipse = shapes.ellipses[inst.ellipse.index];
+  float a = ellipse.a;
+  float b = ellipse.b;
+  float c = ellipse.c;
+  float d = ellipse.d;
+  float e = ellipse.e;
+  float f = ellipse.f;
 
   Range x = { env1_xmin(ep), env1_xmax(ep) };
   Range y = { env1_ymin(ep), env1_ymax(ep) };
@@ -289,7 +287,7 @@ static size_t op1_oval(ARGS1) {
         range_sq(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
       -1.0f);
 
-  vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+  vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
   vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
   vzsf v = vzsf_select(p, vzsf_neg(z.lo), z.hi);
 
@@ -343,7 +341,7 @@ static size_t op1_ret_const(ARGS1) {
 static void analyze(Shapes shapes, Inst * cp, Env1 * ep, Slot1 * sp) {
   static Tbl1 TBL1 = {{
     op1_line,
-    op1_oval,
+    op1_ellipse,
     op1_and,
     op1_or,
     op1_ret,
@@ -377,7 +375,7 @@ static inline size_t op2_dispatch(Shapes shapes, Inst * cp, Env2 * ep, Slot2 * s
   do { return op2_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
 
 static size_t op2_line(ARGS2) {
-  Line line = shapes.line[inst.line.index];
+  Line line = shapes.lines[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -400,14 +398,14 @@ static size_t op2_line(ARGS2) {
   DISPATCH2;
 }
 
-static size_t op2_oval(ARGS2) {
-  Oval oval = shapes.oval[inst.oval.index];
-  float a = oval.a;
-  float b = oval.b;
-  float c = oval.c;
-  float d = oval.d;
-  float e = oval.e;
-  float f = oval.f;
+static size_t op2_ellipse(ARGS2) {
+  Ellipse ellipse = shapes.ellipses[inst.ellipse.index];
+  float a = ellipse.a;
+  float b = ellipse.b;
+  float c = ellipse.c;
+  float d = ellipse.d;
+  float e = ellipse.e;
+  float f = ellipse.f;
 
   vzsf x = vzsf_load(ep->x);
 
@@ -424,7 +422,7 @@ static size_t op2_oval(ARGS2) {
             vzsf_sq(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
           -1.0f);
 
-      vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+      vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
 
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
@@ -477,7 +475,7 @@ static void rasterize(
 {
   static Tbl2 TBL2 = {{
     op2_line,
-    op2_oval,
+    op2_ellipse,
     op2_and,
     op2_or,
     op2_ret,
@@ -722,8 +720,7 @@ void render(
     uint8_t image[resolution][resolution]
   )
 {
-  // cf MAX_SPECIALIZATION_LEVELS
-  assert(256 <= resolution && resolution <= 8192);
+  assert(resolution >= 256);
   assert((resolution & (resolution - 1)) == 0);
 
 #pragma omp parallel for
@@ -736,7 +733,7 @@ void render(
 
     render_tile(
         arena,
-        (Shapes) { prog->line, prog->oval },
+        (Shapes) { prog->lines, prog->ellipses },
         prog->code_len,
         prog->code,
         xmin + 0.25f * (xmax - xmin) * (float) j,

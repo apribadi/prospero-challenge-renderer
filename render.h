@@ -2,7 +2,7 @@
 
 typedef enum {
   OP_LINE,
-  OP_OVAL,
+  OP_ELLIPSE,
   OP_AND,
   OP_OR,
   OP_RET,
@@ -13,7 +13,7 @@ typedef struct {
   Op op;
   union {
     struct { uint16_t index; } line;
-    struct { uint16_t index; bool outside; } oval;
+    struct { uint16_t index; bool outside; } ellipse;
     struct { uint16_t x; uint16_t y; } and;
     struct { uint16_t x; uint16_t y; } or;
     struct { uint16_t x; } ret;
@@ -40,22 +40,19 @@ typedef struct {
   float d;
   float e;
   float f;
-} Oval;
+} Ellipse;
 
 typedef struct {
   size_t code_len;
   Inst * code;
-  size_t line_len;
-  Line * line;
-  size_t oval_len;
-  Oval * oval;
+  Line * lines;
+  Ellipse * ellipses;
 } Prog;
 
 // PRECONDITIONS:
 //
 // - `prog` must be a valid program
-// - `resolution` must be a power of two between 256 and 8192
-// - ...
+// - `resolution` must be a power of two >= 256
 
 void render(
     Prog * prog,

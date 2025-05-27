@@ -173,49 +173,59 @@ static inline Range range_sq(Range x) {
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
 typedef struct {
+  float x[5];
+  float y[5];
+} Input1;
+
+typedef struct {
   uint8_t is_f[16];
   uint8_t is_t[16];
   uint16_t link[16];
 } Slot1;
 
 typedef struct Tbl1_ {
-  void (* ops[6])(Shapes, Inst *, Slot1 *, struct Tbl1_ *, vxsf, vxsf, vxsf, vxsf, size_t, Inst);
+  void (* ops[6])(Shapes, Inst *, Input1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
 } Tbl1;
 
-static inline vzsf broadcast_x1(vxsf x) {
-  return vzsf_from_vxsf_x4(x, x, x, x);
+static inline Range input1_x(Input1 * input) {
+  vxsf xmin = vxsf_load(&input->x[0]);
+  vxsf xmax = vxsf_load(&input->x[1]);
+  return (Range) {
+    vzsf_from_vxsf_x4(xmin, xmin, xmin, xmin),
+    vzsf_from_vxsf_x4(xmax, xmax, xmax, xmax),
+  };
 }
 
-static inline vzsf broadcast_y1(vxsf y) {
-  return
-    vzsf_from_vxsf_x4(
-      vxsf_dup(vxsf_get(y, 0)),
-      vxsf_dup(vxsf_get(y, 1)),
-      vxsf_dup(vxsf_get(y, 2)),
-      vxsf_dup(vxsf_get(y, 3)));
+static inline Range input1_y(Input1 * input) {
+  float y0 = input->y[0];
+  float y1 = input->y[1];
+  float y2 = input->y[2];
+  float y3 = input->y[3];
+  float y4 = input->y[4];
+  return (Range) {
+    vzsf_from_vxsf_x4(vxsf_dup(y1), vxsf_dup(y2), vxsf_dup(y3), vxsf_dup(y4)),
+    vzsf_from_vxsf_x4(vxsf_dup(y0), vxsf_dup(y1), vxsf_dup(y2), vxsf_dup(y3)),
+  };
 }
 
 #define ARGS1 \
   __attribute__((unused)) Shapes shapes, \
   __attribute__((unused)) Inst * code, \
+  __attribute__((unused)) Input1 * input, \
   __attribute__((unused)) Slot1 * slots, \
   __attribute__((unused)) Tbl1 * tbl, \
-  __attribute__((unused)) vxsf xmin, \
-  __attribute__((unused)) vxsf xmax, \
-  __attribute__((unused)) vxsf ymin, \
-  __attribute__((unused)) vxsf ymax, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH1 \
   do { \
     Inst inst = code[pc + 1]; \
-    tbl->ops[inst.op](shapes, code, slots, tbl, xmin, xmax, ymin, ymax, pc + 1, inst); \
+    tbl->ops[inst.op](shapes, code, input, slots, tbl, pc + 1, inst); \
   } while (0)
 
 static void op1_line(ARGS1) {
-  Range x = { broadcast_x1(xmin), broadcast_x1(xmax) };
-  Range y = { broadcast_y1(ymin), broadcast_y1(ymax) };
+  Range x = input1_x(input);
+  Range y = input1_y(input);
   Line line = shapes.lines[inst.line.index];
   float a = line.a;
   float b = line.b;
@@ -228,8 +238,8 @@ static void op1_line(ARGS1) {
 }
 
 static void op1_oval(ARGS1) {
-  Range x = { broadcast_x1(xmin), broadcast_x1(xmax) };
-  Range y = { broadcast_y1(ymin), broadcast_y1(ymax) };
+  Range x = input1_x(input);
+  Range y = input1_y(input);
   Oval oval = shapes.ovals[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
@@ -290,16 +300,7 @@ static void op1_ret(ARGS1) {
 static void op1_ret_const(ARGS1) {
 }
 
-static void analyze(
-    Shapes shapes,
-    Inst * code,
-    Slot1 * slots,
-    float xmin[4],
-    float xmax[4],
-    float ymin[4],
-    float ymax[4]
-  )
-{
+static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
   static Tbl1 TBL = {{
     op1_line,
     op1_oval,
@@ -314,12 +315,9 @@ static void analyze(
   TBL.ops[inst.op](
       shapes,
       code,
+      input,
       slots,
       &TBL,
-      vxsf_load(xmin),
-      vxsf_load(xmax),
-      vxsf_load(ymin),
-      vxsf_load(ymax),
       0,
       inst
     );
@@ -340,17 +338,16 @@ static void specialize(
     Inst * out_code[16]
   )
 {
-  float x[5];
-  float y[5];
+  Input1 input;
 
   for (size_t k = 0; k < 5; k ++) {
-    x[k] = xmin + 0.25f * xlen * (float) k;
-    y[k] = ymax - 0.25f * ylen * (float) k;
+    input.x[k] = xmin + 0.25f * xlen * (float) k;
+    input.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
   Slot1 * slots = arena_alloc(arena, code_len * sizeof(Slot1));
 
-  analyze(shapes, code, slots, x + 0, x + 1, y + 1, y + 0);
+  analyze(shapes, code, &input, slots);
 
   uint16_t * black = arena_alloc(arena, code_len * sizeof(uint16_t));
   uint16_t * remap = arena_alloc(arena, code_len * sizeof(uint16_t));
@@ -432,22 +429,22 @@ static void specialize(
 // -------- RASTERIZE A 256 PIXEL REGION --------
 
 typedef struct {
+  float x[16];
+  float y[16];
+} Input2;
+
+typedef struct {
   uint8_t bits[32];
 } Slot2;
 
-typedef struct {
-  float x[16];
-  float y[16];
-} Env2;
-
 typedef struct Tbl2_ {
-  size_t (* ops[6])(Shapes, Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
+  size_t (* ops[6])(Shapes, Inst *, Input2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
 } Tbl2;
 
 #define ARGS2 \
   __attribute__((unused)) Shapes shapes, \
   __attribute__((unused)) Inst * code, \
-  __attribute__((unused)) Env2 * ep, \
+  __attribute__((unused)) Input2 * input, \
   __attribute__((unused)) Slot2 * slots, \
   __attribute__((unused)) Tbl2 * tbl, \
   __attribute__((unused)) size_t pc, \
@@ -456,7 +453,7 @@ typedef struct Tbl2_ {
 #define DISPATCH2 \
   do { \
     Inst inst = code[pc + 1]; \
-    return tbl->ops[inst.op](shapes, code, ep, slots, tbl, pc + 1, inst); \
+    return tbl->ops[inst.op](shapes, code, input, slots, tbl, pc + 1, inst); \
   } while (0)
 
 static size_t op2_line(ARGS2) {
@@ -465,13 +462,13 @@ static size_t op2_line(ARGS2) {
   float b = line.b;
   float c = line.c;
 
-  vzsf x = vzsf_load(ep->x);
+  vzsf x = vzsf_load(input->x);
 
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
 
     for (size_t i = 0; i < 8; i ++) {
-      float y = ep->y[8 * h + i];
+      float y = input->y[8 * h + i];
       vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
@@ -492,13 +489,13 @@ static size_t op2_oval(ARGS2) {
   float e = oval.e;
   float f = oval.f;
 
-  vzsf x = vzsf_load(ep->x);
+  vzsf x = vzsf_load(input->x);
 
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
 
     for (size_t i = 0; i < 8; i ++) {
-      float y = ep->y[8 * h + i];
+      float y = input->y[8 * h + i];
 
       vzsf z =
         vzsf_add_n(
@@ -567,7 +564,7 @@ static void rasterize(
     op2_ret_const,
   }};
 
-  Env2 env;
+  Input2 input;
 
   Slot2 * slots = arena_alloc(&arena, code_len * sizeof(Slot2));
 
@@ -575,12 +572,12 @@ static void rasterize(
   float dy = 0.0625f * ylen;
 
   for (size_t k = 0; k < 16; k ++) {
-    env.x[k] = xmin + 0.5f * dx + dx * (float) k;
-    env.y[k] = ymax - 0.5f * dy - dy * (float) k;
+    input.x[k] = xmin + 0.5f * dx + dx * (float) k;
+    input.y[k] = ymax - 0.5f * dy - dy * (float) k;
   }
 
   Inst inst = code[0];
-  size_t result = TBL.ops[inst.op](shapes, code, &env, slots, &TBL, 0, inst);
+  size_t result = TBL.ops[inst.op](shapes, code, &input, slots, &TBL, 0, inst);
 
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_load(&slots[result].bits[16 * h]);

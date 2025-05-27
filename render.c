@@ -6,31 +6,67 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "simd.h"
 #include "render.h"
 
 #define MAX_SPECIALIZATION_LEVELS 3
 
+// -------- ARENA ALLOCATOR --------
+//
+// a crude arena
+//
+// - fixed size
+// - 8-byte aligned
+
+typedef struct {
+  unsigned char * base;
+  size_t available;
+} Arena;
+
+__attribute__ ((noinline, noreturn))
+static void arena_oom(void) {
+  fprintf(stderr, "arena: allocation failed!\n");
+  abort();
+}
+
+static void arena_init(Arena * arena, size_t capacity) {
+  void * base = malloc(capacity);
+  if (! base) arena_oom();
+  arena->base = base;
+  arena->available = capacity;
+}
+
+static void arena_drop(Arena * arena) {
+  free(arena->base);
+}
+
+static inline void * arena_alloc(Arena * arena, size_t size) {
+  if (size > arena->available) arena_oom();
+  size_t n = (arena->available - size) & - (size_t) 8;
+  arena->available = n;
+  return (void *) (arena->base + n);
+}
+
+static inline void * arena_alloc_zeroed(Arena * arena, size_t size) {
+  void * p = arena_alloc(arena, size);
+  memset(p, 0, size);
+  return p;
+}
+
 // -------- PRIORITY QUEUE (AND SET) --------
 
 typedef struct {
-  size_t capacity;
   size_t size;
   uint16_t * data;
   bool * included;
 } PQ;
 
-static void pq_init(PQ * t, size_t capacity) {
-  t->capacity = capacity;
+static void pq_init(PQ * t, Arena * arena, size_t capacity) {
   t->size = 0;
-  t->data = malloc(capacity * sizeof(uint16_t));
-  t->included = calloc(capacity, sizeof(bool));
-}
-
-static void pq_drop(PQ * t) {
-  free(t->data);
-  free(t->included);
+  t->data = arena_alloc(arena, capacity * sizeof(uint16_t));
+  t->included = arena_alloc_zeroed(arena, capacity * sizeof(bool));
 }
 
 static inline bool pq_is_empty(PQ * t) {
@@ -100,33 +136,12 @@ static uint16_t pq_pop(PQ * t) {
   return r;
 }
 
-// -------- BUFFER OF U16 --------
-
-typedef struct { size_t capacity; uint16_t * data; } BufU16;
-
-static void buf_u16_init(BufU16 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->data = malloc(capacity * sizeof(uint16_t));
-}
-
-static void buf_u16_drop(BufU16 * t) {
-  free(t->data);
-}
-
-// -------- BUFFER OF INSTRUCTIONS --------
-
-typedef struct { size_t capacity; Inst * data; } BufInst;
-
-static void buf_inst_init(BufInst * t, size_t capacity) {
-  t->capacity = capacity;
-  t->data = malloc(capacity * sizeof(Inst));
-}
-
-static void buf_inst_drop(BufInst * t) {
-  free(t->data);
-}
-
 // -------- SLOT AND ENVIRONMENT TYPES FOR INTERPRETER LOOPS --------
+
+typedef struct {
+  Line * line;
+  Oval * oval;
+} Shapes;
 
 typedef struct {
   uint8_t is_f[16];
@@ -135,115 +150,20 @@ typedef struct {
 } Slot1;
 
 typedef struct {
-  size_t capacity;
   float x[5];
   float y[5];
-  Slot1 * slots;
 } Env1;
-
-static void env1_init(Env1 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->slots = malloc(capacity * sizeof(Slot1));
-}
-
-static void env1_drop(Env1 * t) {
-  free(t->slots);
-}
 
 typedef struct {
   uint8_t bits[32];
 } Slot2;
 
 typedef struct {
-  size_t capacity;
   float x[16];
   float y[16];
-  Slot2 * slots;
 } Env2;
 
-static void env2_init(Env2 * t, size_t capacity) {
-  t->capacity = capacity;
-  t->slots = malloc(capacity * sizeof(Slot2));
-}
-
-static void env2_drop(Env2 * t) {
-  free(t->slots);
-}
-
-// -------- SCRATCH DYNAMICALLY SIZED DATA STRUCTURES --------
-
-typedef struct {
-  BufU16 rev;
-  BufU16 map;
-  PQ pq;
-  Env1 env1;
-  Env2 env2;
-  BufInst code[MAX_SPECIALIZATION_LEVELS][16];
-} Scratch;
-
-static void scratch_init(Scratch * t) {
-  // We're assuming that a zero size_t and a null pointer are both just zero
-  // bytes.
-  memset(t, 0, sizeof(Scratch));
-}
-
-static void scratch_drop(Scratch * t) {
-  buf_u16_drop(&t->rev);
-  buf_u16_drop(&t->map);
-  pq_drop(&t->pq);
-  env1_drop(&t->env1);
-  env2_drop(&t->env2);
-  for (size_t i = 0; i < MAX_SPECIALIZATION_LEVELS; i ++) {
-    for (size_t j = 0; j < 16; j ++) {
-      buf_inst_drop(&t->code[i][j]);
-    }
-  }
-}
-
-static uint16_t * scratch_rev(Scratch * t, size_t capacity) {
-  if (capacity <= t->rev.capacity) return t->rev.data;
-  buf_u16_drop(&t->rev);
-  buf_u16_init(&t->rev, capacity);
-  return t->rev.data;
-}
-
-static uint16_t * scratch_map(Scratch * t, size_t capacity) {
-  if (capacity <= t->map.capacity) return t->map.data;
-  buf_u16_drop(&t->map);
-  buf_u16_init(&t->map, capacity);
-  return t->map.data;
-}
-
-static PQ * scratch_pq(Scratch * t, size_t capacity) {
-  if (capacity <= t->pq.capacity) return &t->pq;
-  pq_drop(&t->pq);
-  pq_init(&t->pq, capacity);
-  return &t->pq;
-}
-
-static Env1 * scratch_env1(Scratch * t, size_t capacity) {
-  if (capacity <= t->env1.capacity) return &t->env1;
-  env1_drop(&t->env1);
-  env1_init(&t->env1, capacity);
-  return &t->env1;
-}
-
-static Env2 * scratch_env2(Scratch * t, size_t capacity) {
-  if (capacity <= t->env2.capacity) return &t->env2;
-  env2_drop(&t->env2);
-  env2_init(&t->env2, capacity);
-  return &t->env2;
-}
-
-static Inst * scratch_code(Scratch * t, size_t i, size_t j, size_t capacity) {
-  BufInst * code = &t->code[i][j];
-  if (capacity <= code->capacity) return code->data;
-  buf_inst_drop(code);
-  buf_inst_init(code, capacity);
-  return code->data;
-}
-
-// -------- 16-wide interval arithmetic --------
+// -------- 16-WIDE INTERVAL ARITHMETIC --------
 
 typedef struct {
   vzsf lo;
@@ -284,12 +204,12 @@ static inline Range range_sq(Range x) {
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
 typedef struct Tbl1_ {
-  size_t (* ops[6])(Inst *, Env1 *, Line *, Oval *, Slot1 *, struct Tbl1_ *, size_t, Inst);
+  size_t (* ops[6])(Shapes, Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
 } Tbl1;
 
-static inline size_t op1_dispatch(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp, Tbl1 * tp, size_t pc) {
+static inline size_t op1_dispatch(Shapes shapes, Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc) {
   Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, lp, op, sp, tp, pc, inst);
+  return tp->ops[inst.op](shapes, cp, ep, sp, tp, pc, inst);
 }
 
 static inline vzsf env1_xmin(Env1 * ep) {
@@ -323,20 +243,19 @@ static inline vzsf env1_ymax(Env1 * ep) {
 }
 
 #define ARGS1 \
+  __attribute__((unused)) Shapes shapes, \
   __attribute__((unused)) Inst * cp, \
   __attribute__((unused)) Env1 * ep, \
-  __attribute__((unused)) Line * lp, \
-  __attribute__((unused)) Oval * op, \
   __attribute__((unused)) Slot1 * sp, \
   __attribute__((unused)) Tbl1 * tp, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH1 \
-  do { return op1_dispatch(cp, ep, lp, op, sp, tp, pc + 1); } while (0)
+  do { return op1_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
 
 static size_t op1_line(ARGS1) {
-  Line line = lp[inst.line.index];
+  Line line = shapes.line[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -354,7 +273,7 @@ static size_t op1_line(ARGS1) {
 }
 
 static size_t op1_oval(ARGS1) {
-  Oval oval = op[inst.oval.index];
+  Oval oval = shapes.oval[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
   float c = oval.c;
@@ -423,7 +342,7 @@ static size_t op1_ret_const(ARGS1) {
   return pc;
 }
 
-static void analyze(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp) {
+static void analyze(Shapes shapes, Inst * cp, Env1 * ep, Slot1 * sp) {
   static Tbl1 TBL1 = {{
     op1_line,
     op1_oval,
@@ -433,35 +352,34 @@ static void analyze(Inst * cp, Env1 * ep, Line * lp, Oval * op, Slot1 * sp) {
     op1_ret_const,
   }};
 
-  (void) op1_dispatch(cp, ep, lp, op, sp, &TBL1, 0);
+  (void) op1_dispatch(shapes, cp, ep, sp, &TBL1, 0);
 }
 
 // -------- RASTERIZE A 256 PIXEL REGION --------
 
 typedef struct Tbl2_ {
-  size_t (* ops[6])(Inst *, Env2 *, Line *, Oval *, Slot2 *, struct Tbl2_ *, size_t, Inst);
+  size_t (* ops[6])(Shapes, Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
 } Tbl2;
 
-static inline size_t op2_dispatch(Inst * cp, Env2 * ep, Line * lp, Oval * op, Slot2 * sp, Tbl2 * tp, size_t pc) {
+static inline size_t op2_dispatch(Shapes shapes, Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc) {
   Inst inst = cp[pc];
-  return tp->ops[inst.op](cp, ep, lp, op, sp, tp, pc, inst);
+  return tp->ops[inst.op](shapes, cp, ep, sp, tp, pc, inst);
 }
 
 #define ARGS2 \
+  __attribute__((unused)) Shapes shapes, \
   __attribute__((unused)) Inst * cp, \
   __attribute__((unused)) Env2 * ep, \
-  __attribute__((unused)) Line * lp, \
-  __attribute__((unused)) Oval * op, \
   __attribute__((unused)) Slot2 * sp, \
   __attribute__((unused)) Tbl2 * tp, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH2 \
-  do { return op2_dispatch(cp, ep, lp, op, sp, tp, pc + 1); } while (0)
+  do { return op2_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
 
 static size_t op2_line(ARGS2) {
-  Line line = lp[inst.line.index];
+  Line line = shapes.line[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
@@ -485,7 +403,7 @@ static size_t op2_line(ARGS2) {
 }
 
 static size_t op2_oval(ARGS2) {
-  Oval oval = op[inst.oval.index];
+  Oval oval = shapes.oval[inst.oval.index];
   float a = oval.a;
   float b = oval.b;
   float c = oval.c;
@@ -547,11 +465,10 @@ static size_t op2_ret_const(ARGS2) {
 }
 
 static void rasterize(
-    Scratch * scratch,
+    Arena arena,
+    Shapes shapes,
     size_t code_len,
     Inst code[code_len],
-    Line * line,
-    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
@@ -569,21 +486,22 @@ static void rasterize(
     op2_ret_const,
   }};
 
-  Env2 * ep = scratch_env2(scratch, code_len);
-  Slot2 * sp = ep->slots;
+  Env2 env;
+
+  Slot2 * slots = arena_alloc(&arena, code_len * sizeof(Slot2));
 
   float dx = 0.0625f * xlen;
   float dy = 0.0625f * ylen;
 
   for (size_t k = 0; k < 16; k ++) {
-    ep->x[k] = xmin + 0.5f * dx + dx * (float) k;
-    ep->y[k] = ymax - 0.5f * dy - dy * (float) k;
+    env.x[k] = xmin + 0.5f * dx + dx * (float) k;
+    env.y[k] = ymax - 0.5f * dy - dy * (float) k;
   }
 
-  size_t result = op2_dispatch(code, ep, line, oval, sp, &TBL2, 0);
+  size_t result = op2_dispatch(shapes, code, &env, slots, &TBL2, 0);
 
   for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_load(&sp[result].bits[16 * h]);
+    vxbu r = vxbu_load(&slots[result].bits[16 * h]);
     for (size_t i = 0; i < 8; i ++) {
       size_t k = 8 * h + i;
       vxbu_store(tile + stride * k, vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
@@ -594,34 +512,35 @@ static void rasterize(
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
 
 static void specialize(
-    Scratch * scratch,
+    Arena arena,
+    Arena * code_arena,
+    Shapes shapes,
     size_t code_len,
     Inst code[code_len],
-    Line * line,
-    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
     float ylen,
-    size_t depth,
     size_t out_code_len[16],
     Inst * out_code[16]
   )
 {
-  Env1 * ep = scratch_env1(scratch, code_len);
+  Env1 env;
 
   for (size_t k = 0; k < 5; k ++) {
-    ep->x[k] = xmin + 0.25f * xlen * (float) k;
-    ep->y[k] = ymax - 0.25f * ylen * (float) k;
+    env.x[k] = xmin + 0.25f * xlen * (float) k;
+    env.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  Slot1 * sp = ep->slots;
+  Slot1 * slots = arena_alloc(&arena, code_len * sizeof(Slot1));
 
-  analyze(code, ep, line, oval, sp);
+  analyze(shapes, code, &env, slots);
 
-  uint16_t * rev = scratch_rev(scratch, code_len);
-  uint16_t * map = scratch_map(scratch, code_len);
-  PQ * gray = scratch_pq(scratch, code_len);
+  uint16_t * rev = arena_alloc(&arena, code_len * sizeof(uint16_t));
+  uint16_t * map = arena_alloc(&arena, code_len * sizeof(uint16_t));
+
+  PQ gray;
+  pq_init(&gray, &arena, code_len);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t sub_code_len = 0;
@@ -631,32 +550,32 @@ static void specialize(
       rev[sub_code_len ++] = k;
       Inst inst = code[k];
       if (inst.op == OP_RET) {
-        if (! sp[inst.ret.x].is_f[t] && ! sp[inst.ret.x].is_t[t]) {
-          pq_insert(gray, sp[inst.ret.x].link[t]);
+        if (! slots[inst.ret.x].is_f[t] && ! slots[inst.ret.x].is_t[t]) {
+          pq_insert(&gray, slots[inst.ret.x].link[t]);
         }
       }
     }
 
-    while (! pq_is_empty(gray)) {
-      uint16_t k = pq_pop(gray);
+    while (! pq_is_empty(&gray)) {
+      uint16_t k = pq_pop(&gray);
       rev[sub_code_len ++] = k;
       Inst inst = code[k];
 
       switch (inst.op) {
       case OP_AND:
-        pq_insert(gray, sp[inst.and.x].link[t]);
-        pq_insert(gray, sp[inst.and.y].link[t]);
+        pq_insert(&gray, slots[inst.and.x].link[t]);
+        pq_insert(&gray, slots[inst.and.y].link[t]);
         break;
       case OP_OR:
-        pq_insert(gray, sp[inst.or.x].link[t]);
-        pq_insert(gray, sp[inst.or.y].link[t]);
+        pq_insert(&gray, slots[inst.or.x].link[t]);
+        pq_insert(&gray, slots[inst.or.y].link[t]);
         break;
       default:
         break;
       }
     }
 
-    Inst * sub_code = scratch_code(scratch, depth, t, sub_code_len);
+    Inst * sub_code = arena_alloc(code_arena, sub_code_len * sizeof(Inst));
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
@@ -669,20 +588,20 @@ static void specialize(
 
       switch (inst.op) {
       case OP_AND:
-        inst.and.x = map[sp[inst.and.x].link[t]];
-        inst.and.y = map[sp[inst.and.y].link[t]];
+        inst.and.x = map[slots[inst.and.x].link[t]];
+        inst.and.y = map[slots[inst.and.y].link[t]];
         break;
       case OP_OR:
-        inst.or.x = map[sp[inst.or.x].link[t]];
-        inst.or.y = map[sp[inst.or.y].link[t]];
+        inst.or.x = map[slots[inst.or.x].link[t]];
+        inst.or.y = map[slots[inst.or.y].link[t]];
         break;
       case OP_RET:
-        if (sp[inst.ret.x].is_f[t]) {
+        if (slots[inst.ret.x].is_f[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { false } };
-        } else if (sp[inst.ret.x].is_t[t]) {
+        } else if (slots[inst.ret.x].is_t[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { true } };
         } else {
-          inst.ret.x = map[sp[inst.ret.x].link[t]];
+          inst.ret.x = map[slots[inst.ret.x].link[t]];
         }
         break;
       default:
@@ -697,16 +616,15 @@ static void specialize(
 // -------- RENDER --------
 
 static void render_tile(
-    Scratch * scratch,
+    Arena arena,
+    Arena code_arena,
+    Shapes shapes,
     size_t code_len,
     Inst code[code_len],
-    Line * line,
-    Oval * oval,
     float xmin,
     float xlen,
     float ymax,
     float ylen,
-    size_t depth,
     size_t resolution,
     size_t stride,
     uint8_t * tile
@@ -726,11 +644,10 @@ static void render_tile(
 
   if (resolution == 16) {
     rasterize(
-        scratch,
+        arena,
+        shapes,
         code_len,
         code,
-        line,
-        oval,
         xmin,
         xlen,
         ymax,
@@ -747,11 +664,10 @@ static void render_tile(
       size_t i = t / 2;
       size_t j = t % 2;
       rasterize(
-          scratch,
+          arena,
+          shapes,
           code_len,
           code,
-          line,
-          oval,
           xmin + 0.5f * xlen * (float) j,
           0.5f * xlen,
           ymax - 0.5f * ylen * (float) i,
@@ -768,16 +684,15 @@ static void render_tile(
   Inst * sub_code[16];
 
   specialize(
-      scratch,
+      arena,
+      &code_arena,
+      shapes,
       code_len,
       code,
-      line,
-      oval,
       xmin,
       xlen,
       ymax,
       ylen,
-      depth,
       sub_code_len,
       sub_code
     );
@@ -787,16 +702,15 @@ static void render_tile(
     size_t j = t % 4;
 
     render_tile(
-        scratch,
+        arena,
+        code_arena,
+        shapes,
         sub_code_len[t],
         sub_code[t],
-        line,
-        oval,
         xmin + 0.25f * xlen * (float) j,
         0.25f * xlen,
         ymax - 0.25f * ylen * (float) i,
         0.25f * ylen,
-        depth + 1,
         resolution / 4,
         stride,
         tile + resolution / 4 * stride * i + resolution / 4 * j
@@ -823,25 +737,29 @@ void render(
     size_t i = t / 4;
     size_t j = t % 4;
 
-    Scratch scratch;
-    scratch_init(&scratch);
+
+    Arena arena;
+    Arena code_arena;
+
+    arena_init(&arena, 1 << 19);
+    arena_init(&code_arena, 1 << 14);
 
     render_tile(
-        &scratch,
+        arena,
+        code_arena,
+        (Shapes) { prog->line, prog->oval },
         prog->code_len,
         prog->code,
-        prog->line,
-        prog->oval,
         xmin + 0.25f * (xmax - xmin) * (float) j,
         0.25f * (xmax - xmin),
         ymax - 0.25f * (ymax - ymin) * (float) i,
         0.25f * (ymax - ymin),
-        0,
         resolution / 4,
         resolution,
         &image[resolution / 4 * i][resolution / 4 * j]
       );
 
-    scratch_drop(&scratch);
+    arena_drop(&arena);
+    arena_drop(&code_arena);
   }
 }

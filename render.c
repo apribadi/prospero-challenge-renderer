@@ -510,8 +510,7 @@ static void rasterize(
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
 
 static void specialize(
-    Arena arena,
-    Arena * code_arena,
+    Arena * arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -530,15 +529,15 @@ static void specialize(
     env.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  Slot1 * slots = arena_alloc(&arena, code_len * sizeof(Slot1));
+  Slot1 * slots = arena_alloc(arena, code_len * sizeof(Slot1));
 
   analyze(shapes, code, &env, slots);
 
-  uint16_t * rev = arena_alloc(&arena, code_len * sizeof(uint16_t));
-  uint16_t * map = arena_alloc(&arena, code_len * sizeof(uint16_t));
+  uint16_t * rev = arena_alloc(arena, code_len * sizeof(uint16_t));
+  uint16_t * map = arena_alloc(arena, code_len * sizeof(uint16_t));
 
   PQ gray;
-  pq_init(&gray, &arena, code_len);
+  pq_init(&gray, arena, code_len);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t sub_code_len = 0;
@@ -573,7 +572,7 @@ static void specialize(
       }
     }
 
-    Inst * sub_code = arena_alloc(code_arena, sub_code_len * sizeof(Inst));
+    Inst * sub_code = arena_alloc(arena, sub_code_len * sizeof(Inst));
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
@@ -615,7 +614,6 @@ static void specialize(
 
 static void render_tile(
     Arena arena,
-    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -682,8 +680,7 @@ static void render_tile(
   Inst * sub_code[16];
 
   specialize(
-      arena,
-      &code_arena,
+      &arena,
       shapes,
       code_len,
       code,
@@ -701,7 +698,6 @@ static void render_tile(
 
     render_tile(
         arena,
-        code_arena,
         shapes,
         sub_code_len[t],
         sub_code[t],
@@ -736,13 +732,10 @@ void render(
     size_t j = t % 4;
 
     Arena arena;
-    Arena code_arena;
     arena_init(&arena, 1 << 19);
-    arena_init(&code_arena, 1 << 14);
 
     render_tile(
         arena,
-        code_arena,
         (Shapes) { prog->line, prog->oval },
         prog->code_len,
         prog->code,
@@ -756,6 +749,5 @@ void render(
       );
 
     arena_drop(&arena);
-    arena_drop(&code_arena);
   }
 }

@@ -10,7 +10,7 @@
 #define XMAX +1.0f
 #define YMIN -1.0f
 #define YMAX +1.0f
-#define ITERATION_COUNT 100
+#define ITERATION_COUNT 500
 #define WARMUP true
 #define MIN_BENCH_RESOLUTION 512
 #define MAX_BENCH_RESOLUTION 4096
@@ -59,11 +59,11 @@ int main(int, char **) {
     uint64_t stop = clock_gettime_nsec_np(CLOCK_REALTIME);
 
     printf(
-        "rendered %dx%d image %d times at %.2f ms per frame ...\n",
+        "rendered %dx%d image %d times at %.1f μs per frame ...\n",
         (int) r,
         (int) r,
         ITERATION_COUNT,
-        (double) (stop - start) / 1000000.0 / ITERATION_COUNT
+        (double) (stop - start) / 1000.0 / ITERATION_COUNT
       );
   }
 

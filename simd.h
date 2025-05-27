@@ -44,10 +44,6 @@ static inline vxbu vxbu_dup(uint8_t x) {
   return vdupq_n_u8(x);
 }
 
-#define vxbu_shr(x, i) vshrq_n_u8(x, i)
-
-#define vxbu_shl(x, i) vshlq_n_u8(x, i)
-
 static inline float vxsf_get(vxsf x, size_t i) {
   return x[i];
 }

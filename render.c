@@ -132,33 +132,6 @@ static uint16_t pq_pop(PQ * t) {
   return r;
 }
 
-// -------- SLOT AND ENVIRONMENT TYPES FOR INTERPRETER LOOPS --------
-
-typedef struct {
-  Line * lines;
-  Ellipse * ellipses;
-} Shapes;
-
-typedef struct {
-  uint8_t is_f[16];
-  uint8_t is_t[16];
-  uint16_t link[16];
-} Slot1;
-
-typedef struct {
-  float x[5];
-  float y[5];
-} Env1;
-
-typedef struct {
-  uint8_t bits[32];
-} Slot2;
-
-typedef struct {
-  float x[16];
-  float y[16];
-} Env2;
-
 // -------- 16-WIDE INTERVAL ARITHMETIC --------
 
 typedef struct {
@@ -199,37 +172,21 @@ static inline Range range_sq(Range x) {
 
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
+typedef struct {
+  uint8_t is_f[16];
+  uint8_t is_t[16];
+  uint16_t link[16];
+} Slot1;
+
 typedef struct Tbl1_ {
-  size_t (* ops[6])(Shapes, Inst *, Env1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
+  void (* ops[6])(Shapes, Inst *, Slot1 *, struct Tbl1_ *, vxsf, vxsf, vxsf, vxsf, size_t, Inst);
 } Tbl1;
 
-static inline size_t op1_dispatch(Shapes shapes, Inst * cp, Env1 * ep, Slot1 * sp, Tbl1 * tp, size_t pc) {
-  Inst inst = cp[pc];
-  return tp->ops[inst.op](shapes, cp, ep, sp, tp, pc, inst);
-}
-
-static inline vzsf env1_xmin(Env1 * ep) {
-  vxsf x = vxsf_load(&ep->x[0]);
+static inline vzsf broadcast_x1(vxsf x) {
   return vzsf_from_vxsf_x4(x, x, x, x);
 }
 
-static inline vzsf env1_xmax(Env1 * ep) {
-  vxsf x = vxsf_load(&ep->x[1]);
-  return vzsf_from_vxsf_x4(x, x, x, x);
-}
-
-static inline vzsf env1_ymin(Env1 * ep) {
-  vxsf y = vxsf_load(&ep->y[1]);
-  return
-    vzsf_from_vxsf_x4(
-      vxsf_dup(vxsf_get(y, 0)),
-      vxsf_dup(vxsf_get(y, 1)),
-      vxsf_dup(vxsf_get(y, 2)),
-      vxsf_dup(vxsf_get(y, 3)));
-}
-
-static inline vzsf env1_ymax(Env1 * ep) {
-  vxsf y = vxsf_load(&ep->y[0]);
+static inline vzsf broadcast_y1(vxsf y) {
   return
     vzsf_from_vxsf_x4(
       vxsf_dup(vxsf_get(y, 0)),
@@ -240,269 +197,132 @@ static inline vzsf env1_ymax(Env1 * ep) {
 
 #define ARGS1 \
   __attribute__((unused)) Shapes shapes, \
-  __attribute__((unused)) Inst * cp, \
-  __attribute__((unused)) Env1 * ep, \
-  __attribute__((unused)) Slot1 * sp, \
-  __attribute__((unused)) Tbl1 * tp, \
+  __attribute__((unused)) Inst * code, \
+  __attribute__((unused)) Slot1 * slots, \
+  __attribute__((unused)) Tbl1 * tbl, \
+  __attribute__((unused)) vxsf xmin, \
+  __attribute__((unused)) vxsf xmax, \
+  __attribute__((unused)) vxsf ymin, \
+  __attribute__((unused)) vxsf ymax, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH1 \
-  do { return op1_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
+  do { \
+    Inst inst = code[pc + 1]; \
+    tbl->ops[inst.op](shapes, code, slots, tbl, xmin, xmax, ymin, ymax, pc + 1, inst); \
+  } while (0)
 
-static size_t op1_line(ARGS1) {
+static void op1_line(ARGS1) {
+  Range x = { broadcast_x1(xmin), broadcast_x1(xmax) };
+  Range y = { broadcast_y1(ymin), broadcast_y1(ymax) };
   Line line = shapes.lines[inst.line.index];
   float a = line.a;
   float b = line.b;
   float c = line.c;
-
-  Range x = { env1_xmin(ep), env1_xmax(ep) };
-  Range y = { env1_ymin(ep), env1_ymax(ep) };
-
   Range z = range_add(range_mul_n(x, a), range_mul_n(y, b));
-
-  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
-  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
-  vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
-
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
+  vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }
 
-static size_t op1_ellipse(ARGS1) {
-  Ellipse ellipse = shapes.ellipses[inst.ellipse.index];
-  float a = ellipse.a;
-  float b = ellipse.b;
-  float c = ellipse.c;
-  float d = ellipse.d;
-  float e = ellipse.e;
-  float f = ellipse.f;
-
-  Range x = { env1_xmin(ep), env1_xmax(ep) };
-  Range y = { env1_ymin(ep), env1_ymax(ep) };
-
+static void op1_oval(ARGS1) {
+  Range x = { broadcast_x1(xmin), broadcast_x1(xmax) };
+  Range y = { broadcast_y1(ymin), broadcast_y1(ymax) };
+  Oval oval = shapes.ovals[inst.oval.index];
+  float a = oval.a;
+  float b = oval.b;
+  float c = oval.c;
+  float d = oval.d;
+  float e = oval.e;
+  float f = oval.f;
   Range z =
     range_add_n(
       range_add(
         range_sq(range_add_n(range_add(range_mul_n(x, a), range_mul_n(y, b)), c)),
         range_sq(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
       -1.0f);
-
-  vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
+  vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
   vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
   vzsf v = vzsf_select(p, vzsf_neg(z.lo), z.hi);
-
-  vxbu_store(sp[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
-  vxbu_store(sp[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
-  vyhu_store(sp[pc].link, vyhu_dup((uint16_t) pc));
-
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
+  vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }
 
-static size_t op1_and(ARGS1) {
-  vxbu x_is_f = vxbu_load(sp[inst.and.x].is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.and.x].is_t);
-  vyhu x_link = vyhu_load(sp[inst.and.x].link);
-  vxbu y_is_f = vxbu_load(sp[inst.and.y].is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.and.y].is_t);
-  vyhu y_link = vyhu_load(sp[inst.and.y].link);
-  vxbu_store(sp[pc].is_f, vxbu_or(x_is_f, y_is_f));
-  vxbu_store(sp[pc].is_t, vxbu_and(x_is_t, y_is_t));
+static void op1_and(ARGS1) {
+  vxbu x_is_f = vxbu_load(slots[inst.and.x].is_f);
+  vxbu x_is_t = vxbu_load(slots[inst.and.x].is_t);
+  vyhu x_link = vyhu_load(slots[inst.and.x].link);
+  vxbu y_is_f = vxbu_load(slots[inst.and.y].is_f);
+  vxbu y_is_t = vxbu_load(slots[inst.and.y].is_t);
+  vyhu y_link = vyhu_load(slots[inst.and.y].link);
+  vxbu_store(slots[pc].is_f, vxbu_or(x_is_f, y_is_f));
+  vxbu_store(slots[pc].is_t, vxbu_and(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
   link = vyhu_select(vxbu_vyhu_movemask(x_is_t), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_t), x_link, link);
-  vyhu_store(sp[pc].link, link);
+  vyhu_store(slots[pc].link, link);
   DISPATCH1;
 }
 
-static size_t op1_or(ARGS1) {
-  vxbu x_is_f = vxbu_load(sp[inst.or.x].is_f);
-  vxbu x_is_t = vxbu_load(sp[inst.or.x].is_t);
-  vyhu x_link = vyhu_load(sp[inst.or.x].link);
-  vxbu y_is_f = vxbu_load(sp[inst.or.y].is_f);
-  vxbu y_is_t = vxbu_load(sp[inst.or.y].is_t);
-  vyhu y_link = vyhu_load(sp[inst.or.y].link);
-  vxbu_store(sp[pc].is_f, vxbu_and(x_is_f, y_is_f));
-  vxbu_store(sp[pc].is_t, vxbu_or(x_is_t, y_is_t));
+static void op1_or(ARGS1) {
+  vxbu x_is_f = vxbu_load(slots[inst.or.x].is_f);
+  vxbu x_is_t = vxbu_load(slots[inst.or.x].is_t);
+  vyhu x_link = vyhu_load(slots[inst.or.x].link);
+  vxbu y_is_f = vxbu_load(slots[inst.or.y].is_f);
+  vxbu y_is_t = vxbu_load(slots[inst.or.y].is_t);
+  vyhu y_link = vyhu_load(slots[inst.or.y].link);
+  vxbu_store(slots[pc].is_f, vxbu_and(x_is_f, y_is_f));
+  vxbu_store(slots[pc].is_t, vxbu_or(x_is_t, y_is_t));
   vyhu link = vyhu_dup((uint16_t) pc);
   link = vyhu_select(vxbu_vyhu_movemask(x_is_f), y_link, link);
   link = vyhu_select(vxbu_vyhu_movemask(y_is_f), x_link, link);
-  vyhu_store(sp[pc].link, link);
+  vyhu_store(slots[pc].link, link);
   DISPATCH1;
 }
 
-static size_t op1_ret(ARGS1) {
-  return inst.ret.x;
+static void op1_ret(ARGS1) {
 }
 
-static size_t op1_ret_const(ARGS1) {
-  return pc;
+static void op1_ret_const(ARGS1) {
 }
 
-static void analyze(Shapes shapes, Inst * cp, Env1 * ep, Slot1 * sp) {
-  static Tbl1 TBL1 = {{
+static void analyze(
+    Shapes shapes,
+    Inst * code,
+    Slot1 * slots,
+    float xmin[4],
+    float xmax[4],
+    float ymin[4],
+    float ymax[4]
+  )
+{
+  static Tbl1 TBL = {{
     op1_line,
-    op1_ellipse,
+    op1_oval,
     op1_and,
     op1_or,
     op1_ret,
     op1_ret_const,
   }};
 
-  (void) op1_dispatch(shapes, cp, ep, sp, &TBL1, 0);
-}
+  Inst inst = code[0];
 
-// -------- RASTERIZE A 256 PIXEL REGION --------
-
-typedef struct Tbl2_ {
-  size_t (* ops[6])(Shapes, Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
-} Tbl2;
-
-static inline size_t op2_dispatch(Shapes shapes, Inst * cp, Env2 * ep, Slot2 * sp, Tbl2 * tp, size_t pc) {
-  Inst inst = cp[pc];
-  return tp->ops[inst.op](shapes, cp, ep, sp, tp, pc, inst);
-}
-
-#define ARGS2 \
-  __attribute__((unused)) Shapes shapes, \
-  __attribute__((unused)) Inst * cp, \
-  __attribute__((unused)) Env2 * ep, \
-  __attribute__((unused)) Slot2 * sp, \
-  __attribute__((unused)) Tbl2 * tp, \
-  __attribute__((unused)) size_t pc, \
-  __attribute__((unused)) Inst inst
-
-#define DISPATCH2 \
-  do { return op2_dispatch(shapes, cp, ep, sp, tp, pc + 1); } while (0)
-
-static size_t op2_line(ARGS2) {
-  Line line = shapes.lines[inst.line.index];
-  float a = line.a;
-  float b = line.b;
-  float c = line.c;
-
-  vzsf x = vzsf_load(ep->x);
-
-  for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_dup(0);
-
-    for (size_t i = 0; i < 8; i ++) {
-      float y = ep->y[8 * h + i];
-      vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
-      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
-    }
-
-    vxbu_store(&sp[pc].bits[16 * h], r);
-  }
-
-  DISPATCH2;
-}
-
-static size_t op2_ellipse(ARGS2) {
-  Ellipse ellipse = shapes.ellipses[inst.ellipse.index];
-  float a = ellipse.a;
-  float b = ellipse.b;
-  float c = ellipse.c;
-  float d = ellipse.d;
-  float e = ellipse.e;
-  float f = ellipse.f;
-
-  vzsf x = vzsf_load(ep->x);
-
-  for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_dup(0);
-
-    for (size_t i = 0; i < 8; i ++) {
-      float y = ep->y[8 * h + i];
-
-      vzsf z =
-        vzsf_add_n(
-          vzsf_add(
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
-          -1.0f);
-
-      vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
-
-      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
-    }
-
-    vxbu_store(&sp[pc].bits[16 * h], r);
-  }
-
-  DISPATCH2;
-}
-
-static size_t op2_and(ARGS2) {
-  vybu x = vybu_load(sp[inst.and.x].bits);
-  vybu y = vybu_load(sp[inst.and.y].bits);
-  vybu_store(sp[pc].bits, vybu_and(x, y));
-
-  DISPATCH2;
-}
-
-static size_t op2_or(ARGS2) {
-  vybu x = vybu_load(sp[inst.or.x].bits);
-  vybu y = vybu_load(sp[inst.or.y].bits);
-  vybu_store(sp[pc].bits, vybu_or(x, y));
-
-  DISPATCH2;
-}
-
-static size_t op2_ret(ARGS2) {
-  return inst.ret.x;
-}
-
-static size_t op2_ret_const(ARGS2) {
-  vybu_store(sp[pc].bits, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
-
-  return pc;
-}
-
-static void rasterize(
-    Arena arena,
-    Shapes shapes,
-    size_t code_len,
-    Inst code[code_len],
-    float xmin,
-    float xlen,
-    float ymax,
-    float ylen,
-    size_t stride,
-    uint8_t * tile
-  )
-{
-  static Tbl2 TBL2 = {{
-    op2_line,
-    op2_ellipse,
-    op2_and,
-    op2_or,
-    op2_ret,
-    op2_ret_const,
-  }};
-
-  Env2 env;
-
-  Slot2 * slots = arena_alloc(&arena, code_len * sizeof(Slot2));
-
-  float dx = 0.0625f * xlen;
-  float dy = 0.0625f * ylen;
-
-  for (size_t k = 0; k < 16; k ++) {
-    env.x[k] = xmin + 0.5f * dx + dx * (float) k;
-    env.y[k] = ymax - 0.5f * dy - dy * (float) k;
-  }
-
-  size_t result = op2_dispatch(shapes, code, &env, slots, &TBL2, 0);
-
-  for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_load(&slots[result].bits[16 * h]);
-    for (size_t i = 0; i < 8; i ++) {
-      size_t k = 8 * h + i;
-      vxbu_store(tile + stride * k, vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
-    }
-  }
+  TBL.ops[inst.op](
+      shapes,
+      code,
+      slots,
+      &TBL,
+      vxsf_load(xmin),
+      vxsf_load(xmax),
+      vxsf_load(ymin),
+      vxsf_load(ymax),
+      0,
+      inst
+    );
 }
 
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
@@ -520,19 +340,20 @@ static void specialize(
     Inst * out_code[16]
   )
 {
-  Env1 env;
+  float x[5];
+  float y[5];
 
   for (size_t k = 0; k < 5; k ++) {
-    env.x[k] = xmin + 0.25f * xlen * (float) k;
-    env.y[k] = ymax - 0.25f * ylen * (float) k;
+    x[k] = xmin + 0.25f * xlen * (float) k;
+    y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
   Slot1 * slots = arena_alloc(arena, code_len * sizeof(Slot1));
 
-  analyze(shapes, code, &env, slots);
+  analyze(shapes, code, slots, x + 0, x + 1, y + 1, y + 0);
 
-  uint16_t * rev = arena_alloc(arena, code_len * sizeof(uint16_t));
-  uint16_t * map = arena_alloc(arena, code_len * sizeof(uint16_t));
+  uint16_t * black = arena_alloc(arena, code_len * sizeof(uint16_t));
+  uint16_t * remap = arena_alloc(arena, code_len * sizeof(uint16_t));
 
   PQ gray;
   pq_init(&gray, arena, code_len);
@@ -542,7 +363,7 @@ static void specialize(
 
     {
       uint16_t k = (uint16_t) (code_len - 1);
-      rev[sub_code_len ++] = k;
+      black[sub_code_len ++] = k;
       Inst inst = code[k];
       if (inst.op == OP_RET) {
         if (! slots[inst.ret.x].is_f[t] && ! slots[inst.ret.x].is_t[t]) {
@@ -553,7 +374,7 @@ static void specialize(
 
     while (! pq_is_empty(&gray)) {
       uint16_t k = pq_pop(&gray);
-      rev[sub_code_len ++] = k;
+      black[sub_code_len ++] = k;
       Inst inst = code[k];
 
       switch (inst.op) {
@@ -576,19 +397,19 @@ static void specialize(
     out_code_len[t] = sub_code_len;
 
     for (size_t i = 0; i < sub_code_len; i ++) {
-      uint16_t k = rev[sub_code_len - 1 - i];
+      uint16_t k = black[sub_code_len - 1 - i];
 
-      map[k] = (uint16_t) i;
+      remap[k] = (uint16_t) i;
       Inst inst = code[k];
 
       switch (inst.op) {
       case OP_AND:
-        inst.and.x = map[slots[inst.and.x].link[t]];
-        inst.and.y = map[slots[inst.and.y].link[t]];
+        inst.and.x = remap[slots[inst.and.x].link[t]];
+        inst.and.y = remap[slots[inst.and.y].link[t]];
         break;
       case OP_OR:
-        inst.or.x = map[slots[inst.or.x].link[t]];
-        inst.or.y = map[slots[inst.or.y].link[t]];
+        inst.or.x = remap[slots[inst.or.x].link[t]];
+        inst.or.y = remap[slots[inst.or.y].link[t]];
         break;
       case OP_RET:
         if (slots[inst.ret.x].is_f[t]) {
@@ -596,7 +417,7 @@ static void specialize(
         } else if (slots[inst.ret.x].is_t[t]) {
           inst = (Inst) { OP_RET_CONST, .ret_const = { true } };
         } else {
-          inst.ret.x = map[slots[inst.ret.x].link[t]];
+          inst.ret.x = remap[slots[inst.ret.x].link[t]];
         }
         break;
       default:
@@ -604,6 +425,168 @@ static void specialize(
       }
 
       sub_code[i] = inst;
+    }
+  }
+}
+
+// -------- RASTERIZE A 256 PIXEL REGION --------
+
+typedef struct {
+  uint8_t bits[32];
+} Slot2;
+
+typedef struct {
+  float x[16];
+  float y[16];
+} Env2;
+
+typedef struct Tbl2_ {
+  size_t (* ops[6])(Shapes, Inst *, Env2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
+} Tbl2;
+
+#define ARGS2 \
+  __attribute__((unused)) Shapes shapes, \
+  __attribute__((unused)) Inst * code, \
+  __attribute__((unused)) Env2 * ep, \
+  __attribute__((unused)) Slot2 * slots, \
+  __attribute__((unused)) Tbl2 * tbl, \
+  __attribute__((unused)) size_t pc, \
+  __attribute__((unused)) Inst inst
+
+#define DISPATCH2 \
+  do { \
+    Inst inst = code[pc + 1]; \
+    return tbl->ops[inst.op](shapes, code, ep, slots, tbl, pc + 1, inst); \
+  } while (0)
+
+static size_t op2_line(ARGS2) {
+  Line line = shapes.lines[inst.line.index];
+  float a = line.a;
+  float b = line.b;
+  float c = line.c;
+
+  vzsf x = vzsf_load(ep->x);
+
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_dup(0);
+
+    for (size_t i = 0; i < 8; i ++) {
+      float y = ep->y[8 * h + i];
+      vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
+      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+    }
+
+    vxbu_store(&slots[pc].bits[16 * h], r);
+  }
+
+  DISPATCH2;
+}
+
+static size_t op2_oval(ARGS2) {
+  Oval oval = shapes.ovals[inst.oval.index];
+  float a = oval.a;
+  float b = oval.b;
+  float c = oval.c;
+  float d = oval.d;
+  float e = oval.e;
+  float f = oval.f;
+
+  vzsf x = vzsf_load(ep->x);
+
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_dup(0);
+
+    for (size_t i = 0; i < 8; i ++) {
+      float y = ep->y[8 * h + i];
+
+      vzsf z =
+        vzsf_add_n(
+          vzsf_add(
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
+          -1.0f);
+
+      vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
+
+      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+    }
+
+    vxbu_store(&slots[pc].bits[16 * h], r);
+  }
+
+  DISPATCH2;
+}
+
+static size_t op2_and(ARGS2) {
+  vybu x = vybu_load(slots[inst.and.x].bits);
+  vybu y = vybu_load(slots[inst.and.y].bits);
+  vybu_store(slots[pc].bits, vybu_and(x, y));
+
+  DISPATCH2;
+}
+
+static size_t op2_or(ARGS2) {
+  vybu x = vybu_load(slots[inst.or.x].bits);
+  vybu y = vybu_load(slots[inst.or.y].bits);
+  vybu_store(slots[pc].bits, vybu_or(x, y));
+
+  DISPATCH2;
+}
+
+static size_t op2_ret(ARGS2) {
+  return inst.ret.x;
+}
+
+static size_t op2_ret_const(ARGS2) {
+  vybu_store(slots[pc].bits, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
+
+  return pc;
+}
+
+static void rasterize(
+    Arena arena,
+    Shapes shapes,
+    size_t code_len,
+    Inst code[code_len],
+    float xmin,
+    float xlen,
+    float ymax,
+    float ylen,
+    size_t stride,
+    uint8_t * tile
+  )
+{
+  static Tbl2 TBL = {{
+    op2_line,
+    op2_oval,
+    op2_and,
+    op2_or,
+    op2_ret,
+    op2_ret_const,
+  }};
+
+  Env2 env;
+
+  Slot2 * slots = arena_alloc(&arena, code_len * sizeof(Slot2));
+
+  float dx = 0.0625f * xlen;
+  float dy = 0.0625f * ylen;
+
+  for (size_t k = 0; k < 16; k ++) {
+    env.x[k] = xmin + 0.5f * dx + dx * (float) k;
+    env.y[k] = ymax - 0.5f * dy - dy * (float) k;
+  }
+
+  Inst inst = code[0];
+  size_t result = TBL.ops[inst.op](shapes, code, &env, slots, &TBL, 0, inst);
+
+  for (size_t h = 0; h < 2; h ++) {
+    vxbu r = vxbu_load(&slots[result].bits[16 * h]);
+    for (size_t i = 0; i < 8; i ++) {
+      size_t k = 8 * h + i;
+      vxbu_store(tile + stride * k, vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
     }
   }
 }
@@ -629,7 +612,7 @@ static void render_tile(
 
     for (size_t i = 0; i < resolution; i ++) {
       for (size_t j = 0; j < resolution; j += 16) {
-        vxbu_store(tile + stride * i + j, vxbu_dup(value));
+        memset(tile + stride * i + j, value, 16);
       }
     }
 
@@ -711,7 +694,9 @@ static void render_tile(
 }
 
 void render(
-    Prog * prog,
+    Shapes shapes,
+    size_t code_len,
+    Inst code[code_len],
     float xmin,
     float xmax,
     float ymin,
@@ -733,9 +718,9 @@ void render(
 
     render_tile(
         arena,
-        (Shapes) { prog->lines, prog->ellipses },
-        prog->code_len,
-        prog->code,
+        shapes,
+        code_len,
+        code,
         xmin + 0.25f * (xmax - xmin) * (float) j,
         0.25f * (xmax - xmin),
         ymax - 0.25f * (ymax - ymin) * (float) i,

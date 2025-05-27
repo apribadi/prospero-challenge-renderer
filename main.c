@@ -25,7 +25,9 @@ int main(int, char **) {
     if (WARMUP) {
       for (size_t i = 0; i < ITERATION_COUNT; i ++) {
         render(
-            &PROSPERO,
+            PROSPERO_SHAPES,
+            sizeof(PROSPERO_CODE) / sizeof(Inst),
+            PROSPERO_CODE,
             XMIN,
             XMAX,
             YMIN,
@@ -42,7 +44,9 @@ int main(int, char **) {
 
     for (size_t i = 0; i < ITERATION_COUNT; i ++) {
       render(
-          &PROSPERO,
+          PROSPERO_SHAPES,
+          sizeof(PROSPERO_CODE) / sizeof(Inst),
+          PROSPERO_CODE,
           XMIN,
           XMAX,
           YMIN,
@@ -64,7 +68,9 @@ int main(int, char **) {
   }
 
   render(
-      &PROSPERO,
+      PROSPERO_SHAPES,
+      sizeof(PROSPERO_CODE) / sizeof(Inst),
+      PROSPERO_CODE,
       XMIN,
       XMAX,
       YMIN,

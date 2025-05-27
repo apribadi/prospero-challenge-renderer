@@ -84,7 +84,7 @@ def simplify(out, cse, ins):
                     y = simplify(out, cse, ("le_const", y, t))
                     return simplify(out, cse, ("and", x, y))
                 case "le_const_sqrt", ("add_square_affine", a, b, c, d, e, f):
-                    return emit(out, cse, ("ellipse", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, False))
+                    return emit(out, cse, ("oval", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, False))
                 case "ge_const", ("affine", a, b, c):
                     return emit(out, cse, ("line", - a + 0, - b + 0, t - c + 0))
                 case "ge_const", ("sqrt", x):
@@ -102,7 +102,7 @@ def simplify(out, cse, ins):
                     y = simplify(out, cse, ("ge_const", y, t))
                     return simplify(out, cse, ("or", x, y))
                 case "ge_const_sqrt", ("add_square_affine", a, b, c, d, e, f):
-                    return emit(out, cse, ("ellipse", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, True))
+                    return emit(out, cse, ("oval", a / t + 0, b / t + 0, c / t + 0, d / t + 0, e / t + 0, f / t + 0, True))
                 case _:
                     return emit(out, cse, (op, x, t))
         case op, Var(x), Var(y):
@@ -185,7 +185,7 @@ for i, ins in enumerate(code):
 code = out
 
 line = []
-ellipse = []
+oval = []
 
 print(f"static Inst PROSPERO_CODE[{len(code)}] = {{")
 
@@ -194,10 +194,10 @@ for i, ins in enumerate(code):
         case "line", a, b, c:
             k = push(line, (a, b, c))
             print(f"  [{i}] = {{ OP_LINE, .line = {{ {k} }} }},")
-        case "ellipse", a, b, c, d, e, f, outside:
-            k = push(ellipse, (a, b, c, d, e, f))
+        case "oval", a, b, c, d, e, f, outside:
+            k = push(oval, (a, b, c, d, e, f))
             o = "true" if outside else "false"
-            print(f"  [{i}] = {{ OP_ELLIPSE, .ellipse = {{ {k}, {o} }} }},")
+            print(f"  [{i}] = {{ OP_OVAL, .oval = {{ {k}, {o} }} }},")
         case "and", x, y:
             print(f"  [{i}] = {{ OP_AND, .and = {{ {x}, {y} }} }},")
         case "or", x, y:
@@ -209,23 +209,21 @@ for i, ins in enumerate(code):
 
 print(f"}};")
 print(f"")
-print(f"static Line PROSPERO_LINE[{len(line)}] = {{")
+print(f"static Line PROSPERO_LINES[{len(line)}] = {{")
 
 for (a, b, c) in line:
     print(f"  {{ {a:+.9e}f, {b:+.9e}f, {c:+.9e}f }} ,")
 
 print(f"}};")
 print(f"")
-print(f"static Ellipse PROSPERO_ELLIPSE[{len(ellipse)}] = {{")
+print(f"static Oval PROSPERO_OVALS[{len(oval)}] = {{")
 
-for (a, b, c, d, e, f) in ellipse:
+for (a, b, c, d, e, f) in oval:
     print(f"  {{ {a:+.9e}f, {b:+.9e}f, {c:+.9e}f, {d:+.9e}f, {e:+.9e}f, {f:+.9e}f }},")
 
 print(f"}};")
 print(f"")
-print(f"static Prog PROSPERO = {{")
-print(f"  .code_len = {len(code)},")
-print(f"  .code = PROSPERO_CODE,")
-print(f"  .lines = PROSPERO_LINE,")
-print(f"  .ellipses = PROSPERO_ELLIPSE,")
+print(f"static Shapes PROSPERO_SHAPES = {{")
+print(f"  .lines = PROSPERO_LINES,")
+print(f"  .ovals = PROSPERO_OVALS,")
 print(f"}};")

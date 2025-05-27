@@ -449,52 +449,39 @@ typedef struct Tbl2_ {
 
 static size_t op2_line(ARGS2) {
   Line line = shapes.lines[inst.line.index];
-
   vzsf x = vzsf_load(input->x);
-
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
-
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
       vzsf z = vzsf_add_n(vzsf_mul_n(x, line.a), line.b * y);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- line.c)));
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
     }
-
     vxbu_store(&slots[pc].bits[16 * h], r);
   }
-
   DISPATCH2;
 }
 
 static size_t op2_oval(ARGS2) {
   Oval oval = shapes.ovals[inst.oval.index];
-
   vzsf x = vzsf_load(input->x);
-
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
-
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-
       vzsf z =
         vzsf_add_n(
           vzsf_add(
             vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.a), y * oval.b + oval.c)),
             vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.d), y * oval.e + oval.f))),
           -1.0f);
-
       vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
-
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
     }
-
     vxbu_store(&slots[pc].bits[16 * h], r);
   }
-
   DISPATCH2;
 }
 
@@ -502,7 +489,6 @@ static size_t op2_and(ARGS2) {
   vybu x = vybu_load(slots[inst.and.x].bits);
   vybu y = vybu_load(slots[inst.and.y].bits);
   vybu_store(slots[pc].bits, vybu_and(x, y));
-
   DISPATCH2;
 }
 
@@ -510,7 +496,6 @@ static size_t op2_or(ARGS2) {
   vybu x = vybu_load(slots[inst.or.x].bits);
   vybu y = vybu_load(slots[inst.or.y].bits);
   vybu_store(slots[pc].bits, vybu_or(x, y));
-
   DISPATCH2;
 }
 
@@ -520,7 +505,6 @@ static size_t op2_ret(ARGS2) {
 
 static size_t op2_ret_const(ARGS2) {
   vybu_store(slots[pc].bits, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
-
   return pc;
 }
 

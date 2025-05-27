@@ -59,11 +59,11 @@ int main(int, char **) {
     uint64_t stop = clock_gettime_nsec_np(CLOCK_REALTIME);
 
     printf(
-        "rendered %dx%d image %d times at %.1f μs per frame ...\n",
+        "rendered %dx%d image %d times at %.3f ms per frame ...\n",
         (int) r,
         (int) r,
         ITERATION_COUNT,
-        (double) (stop - start) / 1000.0 / ITERATION_COUNT
+        (double) (stop - start) / 1000000.0 / ITERATION_COUNT
       );
   }
 

@@ -224,34 +224,25 @@ static inline Range input1_y(Input1 * input) {
   } while (0)
 
 static void op1_line(ARGS1) {
+  Line line = shapes.lines[inst.line.index];
   Range x = input1_x(input);
   Range y = input1_y(input);
-  Line line = shapes.lines[inst.line.index];
-  float a = line.a;
-  float b = line.b;
-  float c = line.c;
-  Range z = range_add(range_mul_n(x, a), range_mul_n(y, b));
-  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- c), z.lo)));
-  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- c))));
+  Range z = range_add(range_mul_n(x, line.a), range_mul_n(y, line.b));
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- line.c), z.lo)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- line.c))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }
 
 static void op1_oval(ARGS1) {
+  Oval oval = shapes.ovals[inst.oval.index];
   Range x = input1_x(input);
   Range y = input1_y(input);
-  Oval oval = shapes.ovals[inst.oval.index];
-  float a = oval.a;
-  float b = oval.b;
-  float c = oval.c;
-  float d = oval.d;
-  float e = oval.e;
-  float f = oval.f;
   Range z =
     range_add_n(
       range_add(
-        range_sq(range_add_n(range_add(range_mul_n(x, a), range_mul_n(y, b)), c)),
-        range_sq(range_add_n(range_add(range_mul_n(x, d), range_mul_n(y, e)), f))),
+        range_sq(range_add_n(range_add(range_mul_n(x, oval.a), range_mul_n(y, oval.b)), oval.c)),
+        range_sq(range_add_n(range_add(range_mul_n(x, oval.d), range_mul_n(y, oval.e)), oval.f))),
       -1.0f);
   vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
   vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
@@ -458,9 +449,6 @@ typedef struct Tbl2_ {
 
 static size_t op2_line(ARGS2) {
   Line line = shapes.lines[inst.line.index];
-  float a = line.a;
-  float b = line.b;
-  float c = line.c;
 
   vzsf x = vzsf_load(input->x);
 
@@ -469,8 +457,8 @@ static size_t op2_line(ARGS2) {
 
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vzsf z = vzsf_add_n(vzsf_mul_n(x, a), b * y);
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- c)));
+      vzsf z = vzsf_add_n(vzsf_mul_n(x, line.a), line.b * y);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- line.c)));
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
     }
 
@@ -482,12 +470,6 @@ static size_t op2_line(ARGS2) {
 
 static size_t op2_oval(ARGS2) {
   Oval oval = shapes.ovals[inst.oval.index];
-  float a = oval.a;
-  float b = oval.b;
-  float c = oval.c;
-  float d = oval.d;
-  float e = oval.e;
-  float f = oval.f;
 
   vzsf x = vzsf_load(input->x);
 
@@ -500,8 +482,8 @@ static size_t op2_oval(ARGS2) {
       vzsf z =
         vzsf_add_n(
           vzsf_add(
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, a), y * b + c)),
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, d), y * e + f))),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.a), y * oval.b + oval.c)),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.d), y * oval.e + oval.f))),
           -1.0f);
 
       vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);

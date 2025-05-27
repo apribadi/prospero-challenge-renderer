@@ -50,9 +50,7 @@ static inline void * arena_alloc(Arena * arena, size_t size) {
 }
 
 static inline void * arena_alloc_zeroed(Arena * arena, size_t size) {
-  void * p = arena_alloc(arena, size);
-  memset(p, 0, size);
-  return p;
+  return memset(arena_alloc(arena, size), 0, size);
 }
 
 // -------- PRIORITY QUEUE (AND SET) --------
@@ -737,10 +735,8 @@ void render(
     size_t i = t / 4;
     size_t j = t % 4;
 
-
     Arena arena;
     Arena code_arena;
-
     arena_init(&arena, 1 << 19);
     arena_init(&code_arena, 1 << 14);
 

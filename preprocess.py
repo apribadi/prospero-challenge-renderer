@@ -187,6 +187,8 @@ code = out
 line = []
 oval = []
 
+print(f"static size_t PROSPERO_CODE_LEN = {len(code)};")
+print(f"")
 print(f"static Inst PROSPERO_CODE[{len(code)}] = {{")
 
 for i, ins in enumerate(code):

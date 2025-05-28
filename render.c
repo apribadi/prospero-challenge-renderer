@@ -183,9 +183,9 @@ typedef struct {
   uint16_t link[16];
 } Slot1;
 
-typedef struct Tbl1_ {
-  void (* ops[6])(Shapes, Inst *, Input1 *, Slot1 *, struct Tbl1_ *, size_t, Inst);
-} Tbl1;
+typedef struct Table1_ {
+  void (* ops[6])(Shapes, Inst *, Input1 *, Slot1 *, struct Table1_ *, size_t, Inst);
+} Table1;
 
 static inline Range input1_x(Input1 * input) {
   vxsf xmin = vxsf_load(&input->x[0]);
@@ -213,14 +213,14 @@ static inline Range input1_y(Input1 * input) {
   __attribute__((unused)) Inst * code, \
   __attribute__((unused)) Input1 * input, \
   __attribute__((unused)) Slot1 * slots, \
-  __attribute__((unused)) Tbl1 * tbl, \
+  __attribute__((unused)) Table1 * table, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH1 \
   do { \
     Inst inst = code[pc + 1]; \
-    tbl->ops[inst.op](shapes, code, input, slots, tbl, pc + 1, inst); \
+    return table->ops[inst.op](shapes, code, input, slots, table, pc + 1, inst); \
   } while (0)
 
 static void op1_line(ARGS1) {
@@ -292,7 +292,7 @@ static void op1_ret_const(ARGS1) {
 }
 
 static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
-  static Tbl1 TBL = {{
+  static Table1 TABLE = {{
     op1_line,
     op1_oval,
     op1_and,
@@ -302,16 +302,7 @@ static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
   }};
 
   Inst inst = code[0];
-
-  TBL.ops[inst.op](
-      shapes,
-      code,
-      input,
-      slots,
-      &TBL,
-      0,
-      inst
-    );
+  TABLE.ops[inst.op](shapes, code, input, slots, &TABLE, 0, inst);
 }
 
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
@@ -428,23 +419,23 @@ typedef struct {
   uint8_t bits[32];
 } Slot2;
 
-typedef struct Tbl2_ {
-  size_t (* ops[6])(Shapes, Inst *, Input2 *, Slot2 *, struct Tbl2_ *, size_t, Inst);
-} Tbl2;
+typedef struct Table2_ {
+  size_t (* ops[6])(Shapes, Inst *, Input2 *, Slot2 *, struct Table2_ *, size_t, Inst);
+} Table2;
 
 #define ARGS2 \
   __attribute__((unused)) Shapes shapes, \
   __attribute__((unused)) Inst * code, \
   __attribute__((unused)) Input2 * input, \
   __attribute__((unused)) Slot2 * slots, \
-  __attribute__((unused)) Tbl2 * tbl, \
+  __attribute__((unused)) Table2 * table, \
   __attribute__((unused)) size_t pc, \
   __attribute__((unused)) Inst inst
 
 #define DISPATCH2 \
   do { \
     Inst inst = code[pc + 1]; \
-    return tbl->ops[inst.op](shapes, code, input, slots, tbl, pc + 1, inst); \
+    return table->ops[inst.op](shapes, code, input, slots, table, pc + 1, inst); \
   } while (0)
 
 static size_t op2_line(ARGS2) {
@@ -521,7 +512,7 @@ static void rasterize(
     uint8_t * tile
   )
 {
-  static Tbl2 TBL = {{
+  static Table2 TABLE = {{
     op2_line,
     op2_oval,
     op2_and,
@@ -543,7 +534,7 @@ static void rasterize(
   }
 
   Inst inst = code[0];
-  size_t result = TBL.ops[inst.op](shapes, code, &input, slots, &TBL, 0, inst);
+  size_t result = TABLE.ops[inst.op](shapes, code, &input, slots, &TABLE, 0, inst);
 
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_load(&slots[result].bits[16 * h]);
@@ -671,6 +662,7 @@ void render(
   assert(resolution >= 256);
   assert((resolution & (resolution - 1)) == 0);
 
+  /*
 #pragma omp parallel for
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;
@@ -691,6 +683,31 @@ void render(
         resolution / 4,
         resolution,
         &image[resolution / 4 * i][resolution / 4 * j]
+      );
+
+    arena_drop(&arena);
+  }
+  */
+#pragma omp parallel for
+  for (size_t t = 0; t < 4; t ++) {
+    size_t i = t / 2;
+    size_t j = t % 2;
+
+    Arena arena;
+    arena_init(&arena, 1 << 19);
+
+    render_tile(
+        arena,
+        shapes,
+        code_len,
+        code,
+        xmin + 0.5f * (xmax - xmin) * (float) j,
+        0.5f * (xmax - xmin),
+        ymax - 0.5f * (ymax - ymin) * (float) i,
+        0.5f * (ymax - ymin),
+        resolution / 2,
+        resolution,
+        &image[resolution / 2 * i][resolution / 2 * j]
       );
 
     arena_drop(&arena);

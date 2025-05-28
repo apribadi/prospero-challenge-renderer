@@ -10,7 +10,7 @@
 #define XMAX +1.0f
 #define YMIN -1.0f
 #define YMAX +1.0f
-#define ITERATION_COUNT 500
+#define ITERATION_COUNT 100
 #define WARMUP true
 #define MIN_BENCH_RESOLUTION 512
 #define MAX_BENCH_RESOLUTION 4096
@@ -26,7 +26,7 @@ int main(int, char **) {
       for (size_t i = 0; i < ITERATION_COUNT; i ++) {
         render(
             PROSPERO_SHAPES,
-            sizeof(PROSPERO_CODE) / sizeof(Inst),
+            PROSPERO_CODE_LEN,
             PROSPERO_CODE,
             XMIN,
             XMAX,
@@ -45,7 +45,7 @@ int main(int, char **) {
     for (size_t i = 0; i < ITERATION_COUNT; i ++) {
       render(
           PROSPERO_SHAPES,
-          sizeof(PROSPERO_CODE) / sizeof(Inst),
+          PROSPERO_CODE_LEN,
           PROSPERO_CODE,
           XMIN,
           XMAX,
@@ -69,7 +69,7 @@ int main(int, char **) {
 
   render(
       PROSPERO_SHAPES,
-      sizeof(PROSPERO_CODE) / sizeof(Inst),
+      PROSPERO_CODE_LEN,
       PROSPERO_CODE,
       XMIN,
       XMAX,

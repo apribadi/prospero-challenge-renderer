@@ -608,14 +608,26 @@ static void draw_tile(
   size_t sub_code_len[16];
   Inst * sub_code[16];
 
-  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
+  specialize(
+      arena,
+      &code_arena,
+      shapes,
+      code_len,
+      code,
+      xmin,
+      xlen,
+      ymax,
+      ylen,
+      sub_code_len,
+      sub_code
+    );
 
-  for (size_t t = 0; t < 16; t ++) {
-    size_t i = t / 4;
-    size_t j = t % 4;
+  if (resolution == 64) {
+    for (size_t t = 0; t < 16; t ++) {
+      size_t i = t / 4;
+      size_t j = t % 4;
 
-    if (sub_code[t][0].op == OP_RET_CONST) {
-      if (resolution == 64) {
+      if (sub_code[t][0].op == OP_RET_CONST) {
         fill_tile_16(
             sub_code_len[t],
             sub_code[t],
@@ -626,18 +638,6 @@ static void draw_tile(
         continue;
       }
 
-      fill_tile(
-          sub_code_len[t],
-          sub_code[t],
-          resolution / 4,
-          stride,
-          tile + stride * resolution / 4 * i + resolution / 4 * j
-        );
-
-      continue;
-    }
-
-    if (resolution == 64) {
       draw_tile_16(
           arena,
           shapes,
@@ -647,6 +647,23 @@ static void draw_tile(
           0.25f * xlen,
           ymax - 0.25f * ylen * (float) i,
           0.25f * ylen,
+          stride,
+          tile + stride * resolution / 4 * i + resolution / 4 * j
+        );
+    }
+
+    return;
+  }
+
+  for (size_t t = 0; t < 16; t ++) {
+    size_t i = t / 4;
+    size_t j = t % 4;
+
+    if (sub_code[t][0].op == OP_RET_CONST) {
+      fill_tile(
+          sub_code_len[t],
+          sub_code[t],
+          resolution / 4,
           stride,
           tile + stride * resolution / 4 * i + resolution / 4 * j
         );
@@ -720,14 +737,16 @@ void render(
     for (size_t t = 0; t < 64; t ++) {
       // we've sliced the image into 64 regions
       //
-      // 00 01 02 03 16 17 18 19
-      // 04 05 06 07
-      // 08 09 10 11
-      // 12 13 14 15
-      // 32          48 49 50 51
-      // 36          52
-      // 40          56
-      // 44          60
+      //      0  1  2  3  4  5  6  7
+      //   ┌────────────────────────
+      // 0 │ 00 01 02 03 16 17 18 19
+      // 1 │ 04 05 06 07
+      // 2 │ 08 09 10 11
+      // 3 │ 12 13 14 15
+      // 4 │ 32          48 49 50 51
+      // 5 │ 36          52
+      // 6 │ 40          56
+      // 7 │ 44          60
 
       size_t i = t / 16 / 2 * 4 + t % 16 / 4;;
       size_t j = t / 16 % 2 * 4 + t % 16 % 4;;

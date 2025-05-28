@@ -25,6 +25,8 @@ typedef float32x4_t   vxsf;
 
 typedef uint8x16x2_t  vybu;
 typedef uint16x8x2_t  vyhu;
+typedef float32x4x2_t vysf;
+typedef uint32x4x2_t  vysu;
 
 typedef float32x4x4_t vzsf;
 typedef uint32x4x4_t  vzsu;
@@ -118,6 +120,78 @@ static inline vyhu vyhu_select(vyhu p, vyhu x, vyhu y) {
     vbslq_u16(p.val[0], x.val[0], y.val[0]),
     vbslq_u16(p.val[1], x.val[1], y.val[1]),
   }};
+}
+
+static inline vysf vysf_load(float p[8]) {
+  return vld1q_f32_x2(p);
+}
+
+static inline vysf vysf_select(vysu p, vysf x, vysf y) {
+  return (float32x4x2_t) {{
+    vbslq_f32(p.val[0], x.val[0], y.val[0]),
+    vbslq_f32(p.val[1], x.val[1], y.val[1]),
+  }};
+}
+
+static inline vysf vysf_dup(float x) {
+  return (float32x4x2_t) {{ vdupq_n_f32(x), vdupq_n_f32(x), }};
+}
+
+static inline vysf vysf_neg(vysf x) {
+  return (float32x4x2_t) {{
+    vnegq_f32(x.val[0]),
+    vnegq_f32(x.val[1]),
+  }};
+}
+
+static inline vysf vysf_add(vysf x, vysf y) {
+  return (float32x4x2_t) {{
+    vaddq_f32(x.val[0], y.val[0]),
+    vaddq_f32(x.val[1], y.val[1]),
+  }};
+}
+
+static inline vysf vysf_add_n(vysf x, float y) {
+  return (float32x4x2_t) {{
+    vaddq_f32(x.val[0], vdupq_n_f32(y)),
+    vaddq_f32(x.val[1], vdupq_n_f32(y)),
+  }};
+}
+
+static inline vysf vysf_mul(vysf x, vysf y) {
+  return (float32x4x2_t) {{
+    vmulq_f32(x.val[0], y.val[0]),
+    vmulq_f32(x.val[1], y.val[1]),
+  }};
+}
+
+static inline vysf vysf_mul_n(vysf x, float y) {
+  return (float32x4x2_t) {{
+    vmulq_n_f32(x.val[0], y),
+    vmulq_n_f32(x.val[1], y),
+  }};
+}
+
+static inline vysf vysf_sq(vysf x) {
+  return vysf_mul(x, x);
+}
+
+static inline vysu vysf_le(vysf x, vysf y) {
+  return (uint32x4x2_t) {{
+    vcleq_f32(x.val[0], y.val[0]),
+    vcleq_f32(x.val[1], y.val[1]),
+  }};
+}
+
+static inline vysu vysu_dup(uint32_t x) {
+  return (uint32x4x2_t) {{ vdupq_n_u32(x), vdupq_n_u32(x), }};
+}
+
+static inline uint64_t vysu_u64_movemask(vysu x) {
+  uint16x8_t a = vreinterpretq_u16_u32(x.val[0]);
+  uint16x8_t b = vreinterpretq_u16_u32(x.val[1]);
+  uint8x16_t c = vreinterpretq_u8_u16(vuzp1q_u16(a, b));
+  return vdupd_lane_u64(vreinterpret_u64_u8(vuzp1_u8(vget_low_u8(c), vget_high_u8(c))), 0);
 }
 
 static inline vzsf vzsf_load(float p[16]) {

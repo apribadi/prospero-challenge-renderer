@@ -3,5 +3,5 @@
 *.swp
 pcr
 prospero.c
-prospero.pgm
+prospero-*.pgm
 prospero.vm

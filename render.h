@@ -50,7 +50,7 @@ typedef struct {
 // PRECONDITIONS:
 //
 // - `prog` must be a valid program
-// - `resolution` must be a power of two >= 256
+// - `resolution` must be a power of two between 256 and 4096, inclusive
 
 void render(
     Shapes shapes,

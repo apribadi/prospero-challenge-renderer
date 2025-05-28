@@ -759,7 +759,7 @@ void render(
   size_t sub_code_len[64];
   Inst * sub_code[64];
 
-#pragma omp parallel num_threads(4)
+#pragma omp parallel
   {
     Arena arena;
     arena_init(&arena, 1 << 19);
@@ -815,7 +815,6 @@ void render(
           );
         break;
       case 1024:
-        /*
         draw_tile_128(
             arena,
             shapes,
@@ -828,28 +827,6 @@ void render(
             resolution,
             &image[resolution / 8 * i][resolution / 8 * j]
           );
-          */
-        if (sub_code[t][0].op == OP_RET_CONST) {
-          fill_tile_128(
-              sub_code_len[t],
-              sub_code[t],
-              resolution,
-              &image[resolution / 8 * i][resolution / 8 * j]
-            );
-        } else {
-          draw_tile_128(
-              arena,
-              shapes,
-              sub_code_len[t],
-              sub_code[t],
-              xmin + 0.125f * (xmax - xmin) * (float) j,
-              0.125f * (xmax - xmin),
-              ymax - 0.125f * (ymax - ymin) * (float) i,
-              0.125f * (ymax - ymin),
-              resolution,
-              &image[resolution / 8 * i][resolution / 8 * j]
-            );
-        }
         break;
       case 2048:
         draw_tile_256(

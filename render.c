@@ -502,7 +502,6 @@ static size_t op2_ret_const(ARGS2) {
 
 static void draw_tile_16(
     Arena arena,
-    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -514,8 +513,6 @@ static void draw_tile_16(
     uint8_t * tile
   )
 {
-  (void) code_arena;
-
   static Table2 TABLE = {{
     op2_line,
     op2_oval,
@@ -559,23 +556,17 @@ static void fill_tile_16(size_t code_len, Inst code[code_len], size_t stride, ui
   }
 }
 
-static void fill_tile_64(size_t code_len, Inst code[code_len], size_t stride, uint8_t * tile) {
-  uint8_t value = code[0].ret_const.value ? 192 : 64;
+static void fill_tile(size_t code_len, Inst code[code_len], size_t resolution, size_t stride, uint8_t * tile) {
+  uint8_t value = code[0].ret_const.value ? 192 : 32;
 
-  for (size_t i = 0; i < 64; i ++) {
-    memset(tile + stride * i, value, 64);
+  for (size_t i = 0; i < resolution; i ++) {
+    for (size_t j = 0; j < resolution; j += 32) {
+      memset(tile + stride * i + j, value, 32);
+    }
   }
 }
 
-static void fill_tile_128(size_t code_len, Inst code[code_len], size_t stride, uint8_t * tile) {
-  uint8_t value = code[0].ret_const.value ? 192 : 96;
-
-  for (size_t i = 0; i < 128; i ++) {
-    memset(tile + stride * i, value, 128);
-  }
-}
-
-static void draw_tile_64(
+static void draw_tile(
     Arena arena,
     Arena code_arena,
     Shapes shapes,
@@ -585,10 +576,35 @@ static void draw_tile_64(
     float xlen,
     float ymax,
     float ylen,
+    size_t resolution,
     size_t stride,
     uint8_t * tile
   )
 {
+  if (resolution == 128) {
+    for (size_t t = 0; t < 4; t ++) {
+      size_t i = t / 2;
+      size_t j = t % 2;
+
+      draw_tile(
+          arena,
+          code_arena,
+          shapes,
+          code_len,
+          code,
+          xmin + 0.5f * xlen * (float) j,
+          0.5f * xlen,
+          ymax - 0.5f * ylen * (float) i,
+          0.5f * ylen,
+          resolution / 2,
+          stride,
+          tile + stride * resolution / 2 * i + resolution / 2 * j
+        );
+    }
+
+    return;
+  }
+
   size_t sub_code_len[16];
   Inst * sub_code[16];
 
@@ -599,16 +615,31 @@ static void draw_tile_64(
     size_t j = t % 4;
 
     if (sub_code[t][0].op == OP_RET_CONST) {
-      fill_tile_16(
+      if (resolution == 64) {
+        fill_tile_16(
+            sub_code_len[t],
+            sub_code[t],
+            stride,
+            tile + stride * resolution / 4 * i + resolution / 4 * j
+          );
+
+        continue;
+      }
+
+      fill_tile(
           sub_code_len[t],
           sub_code[t],
+          resolution / 4,
           stride,
-          tile + stride * 64 / 4 * i + 64 / 4 * j
+          tile + stride * resolution / 4 * i + resolution / 4 * j
         );
-    } else {
+
+      continue;
+    }
+
+    if (resolution == 64) {
       draw_tile_16(
           arena,
-          code_arena,
           shapes,
           sub_code_len[t],
           sub_code[t],
@@ -617,139 +648,26 @@ static void draw_tile_64(
           ymax - 0.25f * ylen * (float) i,
           0.25f * ylen,
           stride,
-          tile + stride * 64 / 4 * i + 64 / 4 * j
+          tile + stride * resolution / 4 * i + resolution / 4 * j
         );
+
+      continue;
     }
-  }
-}
 
-static void draw_tile_128(
-    Arena arena,
-    Arena code_arena,
-    Shapes shapes,
-    size_t code_len,
-    Inst code[code_len],
-    float xmin,
-    float xlen,
-    float ymax,
-    float ylen,
-    size_t stride,
-    uint8_t * tile
-  )
-{
-  for (size_t t = 0; t < 4; t ++) {
-    size_t i = t / 2;
-    size_t j = t % 2;
-
-    draw_tile_64(
+    draw_tile(
         arena,
         code_arena,
         shapes,
-        code_len,
-        code,
-        xmin + 0.5f * xlen * (float) j,
-        0.5f * xlen,
-        ymax - 0.5f * ylen * (float) i,
-        0.5f * ylen,
+        sub_code_len[t],
+        sub_code[t],
+        xmin + 0.25f * xlen * (float) j,
+        0.25f * xlen,
+        ymax - 0.25f * ylen * (float) i,
+        0.25f * ylen,
+        resolution / 4,
         stride,
-        tile + stride * 128 / 2 * i + 128 / 2 * j
+        tile + stride * resolution / 4 * i + resolution / 4 * j
       );
-  }
-}
-
-static void draw_tile_256(
-    Arena arena,
-    Arena code_arena,
-    Shapes shapes,
-    size_t code_len,
-    Inst code[code_len],
-    float xmin,
-    float xlen,
-    float ymax,
-    float ylen,
-    size_t stride,
-    uint8_t * tile
-  )
-{
-  size_t sub_code_len[16];
-  Inst * sub_code[16];
-
-  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
-
-  for (size_t t = 0; t < 16; t ++) {
-    size_t i = t / 4;
-    size_t j = t % 4;
-
-    if (sub_code[t][0].op == OP_RET_CONST) {
-      fill_tile_64(
-          sub_code_len[t],
-          sub_code[t],
-          stride,
-          tile + stride * 256 / 4 * i + 256 / 4 * j
-        );
-    } else {
-      draw_tile_64(
-          arena,
-          code_arena,
-          shapes,
-          sub_code_len[t],
-          sub_code[t],
-          xmin + 0.25f * xlen * (float) j,
-          0.25f * xlen,
-          ymax - 0.25f * ylen * (float) i,
-          0.25f * ylen,
-          stride,
-          tile + stride * 256 / 4 * i + 256 / 4 * j
-        );
-    }
-  }
-}
-
-static void draw_tile_512(
-    Arena arena,
-    Arena code_arena,
-    Shapes shapes,
-    size_t code_len,
-    Inst code[code_len],
-    float xmin,
-    float xlen,
-    float ymax,
-    float ylen,
-    size_t stride,
-    uint8_t * tile
-  )
-{
-  size_t sub_code_len[16];
-  Inst * sub_code[16];
-
-  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
-
-  for (size_t t = 0; t < 16; t ++) {
-    size_t i = t / 4;
-    size_t j = t % 4;
-
-    if (sub_code[t][0].op == OP_RET_CONST) {
-      fill_tile_128(
-          sub_code_len[t],
-          sub_code[t],
-          stride,
-          tile + stride * 512 / 4 * i + 512 / 4 * j
-        );
-    } else {
-      draw_tile_128(
-          arena,
-          code_arena,
-          shapes,
-          sub_code_len[t],
-          sub_code[t],
-          xmin + 0.25f * xlen * (float) j,
-          0.25f * xlen,
-          ymax - 0.25f * ylen * (float) i,
-          0.25f * ylen,
-          stride,
-          tile + stride * 512 / 4 * i + 512 / 4 * j
-        );
-    }
   }
 }
 
@@ -814,68 +732,20 @@ void render(
       size_t i = t / 16 / 2 * 4 + t % 16 / 4;;
       size_t j = t / 16 % 2 * 4 + t % 16 % 4;;
 
-      switch (resolution) {
-      case 512:
-        draw_tile_64(
-            arena,
-            code_arena,
-            shapes,
-            sub_code_len[t],
-            sub_code[t],
-            xmin + 0.125f * (xmax - xmin) * (float) j,
-            0.125f * (xmax - xmin),
-            ymax - 0.125f * (ymax - ymin) * (float) i,
-            0.125f * (ymax - ymin),
-            resolution,
-            &image[resolution / 8 * i][resolution / 8 * j]
-          );
-        break;
-      case 1024:
-        draw_tile_128(
-            arena,
-            code_arena,
-            shapes,
-            sub_code_len[t],
-            sub_code[t],
-            xmin + 0.125f * (xmax - xmin) * (float) j,
-            0.125f * (xmax - xmin),
-            ymax - 0.125f * (ymax - ymin) * (float) i,
-            0.125f * (ymax - ymin),
-            resolution,
-            &image[resolution / 8 * i][resolution / 8 * j]
-          );
-        break;
-      case 2048:
-        draw_tile_256(
-            arena,
-            code_arena,
-            shapes,
-            sub_code_len[t],
-            sub_code[t],
-            xmin + 0.125f * (xmax - xmin) * (float) j,
-            0.125f * (xmax - xmin),
-            ymax - 0.125f * (ymax - ymin) * (float) i,
-            0.125f * (ymax - ymin),
-            resolution,
-            &image[resolution / 8 * i][resolution / 8 * j]
-          );
-        break;
-      case 4096:
-        draw_tile_512(
-            arena,
-            code_arena,
-            shapes,
-            sub_code_len[t],
-            sub_code[t],
-            xmin + 0.125f * (xmax - xmin) * (float) j,
-            0.125f * (xmax - xmin),
-            ymax - 0.125f * (ymax - ymin) * (float) i,
-            0.125f * (ymax - ymin),
-            resolution,
-            &image[resolution / 8 * i][resolution / 8 * j]
-          );
-        break;
-      }
+      draw_tile(
+          arena,
+          code_arena,
+          shapes,
+          sub_code_len[t],
+          sub_code[t],
+          xmin + 0.125f * (xmax - xmin) * (float) j,
+          0.125f * (xmax - xmin),
+          ymax - 0.125f * (ymax - ymin) * (float) i,
+          0.125f * (ymax - ymin),
+          resolution / 8,
+          resolution,
+          &image[resolution / 8 * i][resolution / 8 * j]
+        );
     }
 
     arena_drop(&arena);

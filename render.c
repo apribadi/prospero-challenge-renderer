@@ -308,7 +308,8 @@ static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
 
 static void specialize(
-    Arena * arena,
+    Arena arena,
+    Arena * code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -327,15 +328,15 @@ static void specialize(
     input.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  Slot1 * slots = arena_alloc(arena, code_len * sizeof(Slot1));
+  Slot1 * slots = arena_alloc(&arena, code_len * sizeof(Slot1));
 
   analyze(shapes, code, &input, slots);
 
-  uint16_t * black = arena_alloc(arena, code_len * sizeof(uint16_t));
-  uint16_t * remap = arena_alloc(arena, code_len * sizeof(uint16_t));
+  uint16_t * black = arena_alloc(&arena, code_len * sizeof(uint16_t));
+  uint16_t * remap = arena_alloc(&arena, code_len * sizeof(uint16_t));
 
   PQ gray;
-  pq_init(&gray, arena, code_len);
+  pq_init(&gray, &arena, code_len);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t sub_code_len = 0;
@@ -370,7 +371,7 @@ static void specialize(
       }
     }
 
-    Inst * sub_code = arena_alloc(arena, sub_code_len * sizeof(Inst));
+    Inst * sub_code = arena_alloc(code_arena, sub_code_len * sizeof(Inst));
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
@@ -501,6 +502,7 @@ static size_t op2_ret_const(ARGS2) {
 
 static void draw_tile_16(
     Arena arena,
+    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -512,6 +514,8 @@ static void draw_tile_16(
     uint8_t * tile
   )
 {
+  (void) code_arena;
+
   static Table2 TABLE = {{
     op2_line,
     op2_oval,
@@ -573,6 +577,7 @@ static void fill_tile_128(size_t code_len, Inst code[code_len], size_t stride, u
 
 static void draw_tile_64(
     Arena arena,
+    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -587,7 +592,7 @@ static void draw_tile_64(
   size_t sub_code_len[16];
   Inst * sub_code[16];
 
-  specialize(&arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
+  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;
@@ -603,6 +608,7 @@ static void draw_tile_64(
     } else {
       draw_tile_16(
           arena,
+          code_arena,
           shapes,
           sub_code_len[t],
           sub_code[t],
@@ -619,6 +625,7 @@ static void draw_tile_64(
 
 static void draw_tile_128(
     Arena arena,
+    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -636,6 +643,7 @@ static void draw_tile_128(
 
     draw_tile_64(
         arena,
+        code_arena,
         shapes,
         code_len,
         code,
@@ -651,6 +659,7 @@ static void draw_tile_128(
 
 static void draw_tile_256(
     Arena arena,
+    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -665,7 +674,7 @@ static void draw_tile_256(
   size_t sub_code_len[16];
   Inst * sub_code[16];
 
-  specialize(&arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
+  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;
@@ -681,6 +690,7 @@ static void draw_tile_256(
     } else {
       draw_tile_64(
           arena,
+          code_arena,
           shapes,
           sub_code_len[t],
           sub_code[t],
@@ -697,6 +707,7 @@ static void draw_tile_256(
 
 static void draw_tile_512(
     Arena arena,
+    Arena code_arena,
     Shapes shapes,
     size_t code_len,
     Inst code[code_len],
@@ -711,7 +722,7 @@ static void draw_tile_512(
   size_t sub_code_len[16];
   Inst * sub_code[16];
 
-  specialize(&arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
+  specialize(arena, &code_arena, shapes, code_len, code, xmin, xlen, ymax, ylen, sub_code_len, sub_code);
 
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;
@@ -727,6 +738,7 @@ static void draw_tile_512(
     } else {
       draw_tile_128(
           arena,
+          code_arena,
           shapes,
           sub_code_len[t],
           sub_code[t],
@@ -762,15 +774,18 @@ void render(
 #pragma omp parallel
   {
     Arena arena;
+    Arena code_arena;
     arena_init(&arena, 1 << 19);
+    arena_init(&code_arena, 1 << 17);
 
-#pragma omp for
+#pragma omp for schedule(dynamic, 1)
     for (size_t t = 0; t < 4; t ++) {
       size_t i = t / 2;
       size_t j = t % 2;
 
       specialize(
-          &arena,
+          arena,
+          &code_arena,
           shapes,
           code_len,
           code,
@@ -783,7 +798,7 @@ void render(
         );
     }
 
-#pragma omp for
+#pragma omp for schedule(dynamic, 1)
     for (size_t t = 0; t < 64; t ++) {
       // we've sliced the image into 64 regions
       //
@@ -803,6 +818,7 @@ void render(
       case 512:
         draw_tile_64(
             arena,
+            code_arena,
             shapes,
             sub_code_len[t],
             sub_code[t],
@@ -817,6 +833,7 @@ void render(
       case 1024:
         draw_tile_128(
             arena,
+            code_arena,
             shapes,
             sub_code_len[t],
             sub_code[t],
@@ -831,6 +848,7 @@ void render(
       case 2048:
         draw_tile_256(
             arena,
+            code_arena,
             shapes,
             sub_code_len[t],
             sub_code[t],
@@ -845,6 +863,7 @@ void render(
       case 4096:
         draw_tile_512(
             arena,
+            code_arena,
             shapes,
             sub_code_len[t],
             sub_code[t],
@@ -860,5 +879,6 @@ void render(
     }
 
     arena_drop(&arena);
+    arena_drop(&code_arena);
   }
 }

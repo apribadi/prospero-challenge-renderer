@@ -190,7 +190,7 @@ typedef struct {
 } Slot1;
 
 typedef struct Table1_ {
-  void (* ops[6])(Shapes, Inst *, Input1 *, Slot1 *, struct Table1_ *, size_t, Inst);
+  void (* ops[6])(Geometry, Inst *, Input1 *, Slot1 *, struct Table1_ *, size_t, Inst);
 } Table1;
 
 static inline Range input1_x(Input1 * input) {
@@ -215,7 +215,7 @@ static inline Range input1_y(Input1 * input) {
 }
 
 #define ARGS1 \
-  __attribute__((unused)) Shapes shapes, \
+  __attribute__((unused)) Geometry geometry, \
   __attribute__((unused)) Inst * code, \
   __attribute__((unused)) Input1 * input, \
   __attribute__((unused)) Slot1 * slots, \
@@ -226,31 +226,31 @@ static inline Range input1_y(Input1 * input) {
 #define DISPATCH1 \
   do { \
     Inst inst = code[pc + 1]; \
-    return table->ops[inst.op](shapes, code, input, slots, table, pc + 1, inst); \
+    return table->ops[inst.op](geometry, code, input, slots, table, pc + 1, inst); \
   } while (0)
 
 static void op1_line(ARGS1) {
-  Line line = shapes.lines[inst.line.index];
+  Line l = geometry.line[inst.line.index];
   Range x = input1_x(input);
   Range y = input1_y(input);
-  Range z = range_add(range_mul_n(x, line.a), range_mul_n(y, line.b));
-  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- line.c), z.lo)));
-  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- line.c))));
+  Range z = range_add(range_mul_n(x, l.a), range_mul_n(y, l.b));
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- l.c), z.lo)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- l.c))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }
 
-static void op1_oval(ARGS1) {
-  Oval oval = shapes.ovals[inst.oval.index];
+static void op1_ellipse(ARGS1) {
+  Ellipse e = geometry.ellipse[inst.ellipse.index];
   Range x = input1_x(input);
   Range y = input1_y(input);
   Range z =
     range_add_n(
       range_add(
-        range_sq(range_add_n(range_add(range_mul_n(x, oval.a), range_mul_n(y, oval.b)), oval.c)),
-        range_sq(range_add_n(range_add(range_mul_n(x, oval.d), range_mul_n(y, oval.e)), oval.f))),
+        range_sq(range_add_n(range_add(range_mul_n(x, e.a), range_mul_n(y, e.b)), e.c)),
+        range_sq(range_add_n(range_add(range_mul_n(x, e.d), range_mul_n(y, e.e)), e.f))),
       -1.0f);
-  vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+  vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
   vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
   vzsf v = vzsf_select(p, vzsf_neg(z.lo), z.hi);
   vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
@@ -297,10 +297,10 @@ static void op1_ret(ARGS1) {
 static void op1_ret_const(ARGS1) {
 }
 
-static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
+static void analyze(Geometry geometry, Inst * code, Input1 * input, Slot1 * slots) {
   static Table1 TABLE = {{
     op1_line,
-    op1_oval,
+    op1_ellipse,
     op1_and,
     op1_or,
     op1_ret,
@@ -308,7 +308,7 @@ static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
   }};
 
   Inst inst = code[0];
-  TABLE.ops[inst.op](shapes, code, input, slots, &TABLE, 0, inst);
+  TABLE.ops[inst.op](geometry, code, input, slots, &TABLE, 0, inst);
 }
 
 // -------- SPECIALIZE CODE TO 16 SUBREGIONS --------
@@ -316,7 +316,7 @@ static void analyze(Shapes shapes, Inst * code, Input1 * input, Slot1 * slots) {
 static void specialize(
     Arena arena,
     Arena * code_arena,
-    Shapes shapes,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
@@ -336,7 +336,7 @@ static void specialize(
 
   Slot1 * slots = ALLOC_ARRAY(&arena, code_len, Slot1);
 
-  analyze(shapes, code, &input, slots);
+  analyze(geometry, code, &input, slots);
 
   uint16_t * black = ALLOC_ARRAY(&arena, code_len, uint16_t);
   uint16_t * remap = ALLOC_ARRAY(&arena, code_len, uint16_t);
@@ -423,15 +423,15 @@ typedef struct {
 } Input2;
 
 typedef struct {
-  uint8_t bits[32];
+  uint8_t bitset[32];
 } Slot2;
 
 typedef struct Table2_ {
-  size_t (* ops[6])(Shapes, Inst *, Input2 *, Slot2 *, struct Table2_ *, size_t, Inst);
+  size_t (* ops[6])(Geometry, Inst *, Input2 *, Slot2 *, struct Table2_ *, size_t, Inst);
 } Table2;
 
 #define ARGS2 \
-  __attribute__((unused)) Shapes shapes, \
+  __attribute__((unused)) Geometry geometry, \
   __attribute__((unused)) Inst * code, \
   __attribute__((unused)) Input2 * input, \
   __attribute__((unused)) Slot2 * slots, \
@@ -442,27 +442,27 @@ typedef struct Table2_ {
 #define DISPATCH2 \
   do { \
     Inst inst = code[pc + 1]; \
-    return table->ops[inst.op](shapes, code, input, slots, table, pc + 1, inst); \
+    return table->ops[inst.op](geometry, code, input, slots, table, pc + 1, inst); \
   } while (0)
 
 static size_t op2_line(ARGS2) {
-  Line line = shapes.lines[inst.line.index];
+  Line l = geometry.line[inst.line.index];
   vzsf x = vzsf_load(input->x);
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vzsf z = vzsf_add_n(vzsf_mul_n(x, line.a), line.b * y);
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- line.c)));
+      vzsf z = vzsf_add_n(vzsf_mul_n(x, l.a), l.b * y);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- l.c)));
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
     }
-    vxbu_store(&slots[pc].bits[16 * h], r);
+    vxbu_store(&slots[pc].bitset[16 * h], r);
   }
   DISPATCH2;
 }
 
-static size_t op2_oval(ARGS2) {
-  Oval oval = shapes.ovals[inst.oval.index];
+static size_t op2_ellipse(ARGS2) {
+  Ellipse e = geometry.ellipse[inst.ellipse.index];
   vzsf x = vzsf_load(input->x);
   for (size_t h = 0; h < 2; h ++) {
     vxbu r = vxbu_dup(0);
@@ -471,29 +471,29 @@ static size_t op2_oval(ARGS2) {
       vzsf z =
         vzsf_add_n(
           vzsf_add(
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.a), y * oval.b + oval.c)),
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, oval.d), y * oval.e + oval.f))),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, e.a), y * e.b + e.c)),
+            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, e.d), y * e.e + e.f))),
           -1.0f);
-      vzsu p = vzsu_dup(inst.oval.outside ? UINT32_MAX : 0);
+      vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
       r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
     }
-    vxbu_store(&slots[pc].bits[16 * h], r);
+    vxbu_store(&slots[pc].bitset[16 * h], r);
   }
   DISPATCH2;
 }
 
 static size_t op2_and(ARGS2) {
-  vybu x = vybu_load(slots[inst.and.x].bits);
-  vybu y = vybu_load(slots[inst.and.y].bits);
-  vybu_store(slots[pc].bits, vybu_and(x, y));
+  vybu x = vybu_load(slots[inst.and.x].bitset);
+  vybu y = vybu_load(slots[inst.and.y].bitset);
+  vybu_store(slots[pc].bitset, vybu_and(x, y));
   DISPATCH2;
 }
 
 static size_t op2_or(ARGS2) {
-  vybu x = vybu_load(slots[inst.or.x].bits);
-  vybu y = vybu_load(slots[inst.or.y].bits);
-  vybu_store(slots[pc].bits, vybu_or(x, y));
+  vybu x = vybu_load(slots[inst.or.x].bitset);
+  vybu y = vybu_load(slots[inst.or.y].bitset);
+  vybu_store(slots[pc].bitset, vybu_or(x, y));
   DISPATCH2;
 }
 
@@ -502,13 +502,13 @@ static size_t op2_ret(ARGS2) {
 }
 
 static size_t op2_ret_const(ARGS2) {
-  vybu_store(slots[pc].bits, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
+  vybu_store(slots[pc].bitset, vybu_dup(inst.ret_const.value ? UINT8_MAX : 0));
   return pc;
 }
 
 static void draw_tile_16(
     Arena arena,
-    Shapes shapes,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
@@ -521,7 +521,7 @@ static void draw_tile_16(
 {
   static Table2 TABLE = {{
     op2_line,
-    op2_oval,
+    op2_ellipse,
     op2_and,
     op2_or,
     op2_ret,
@@ -541,10 +541,10 @@ static void draw_tile_16(
   }
 
   Inst inst = code[0];
-  size_t result = TABLE.ops[inst.op](shapes, code, &input, slots, &TABLE, 0, inst);
+  size_t result = TABLE.ops[inst.op](geometry, code, &input, slots, &TABLE, 0, inst);
 
   for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_load(&slots[result].bits[16 * h]);
+    vxbu r = vxbu_load(&slots[result].bitset[16 * h]);
     for (size_t i = 0; i < 8; i ++) {
       size_t k = 8 * h + i;
       vxbu_store(tile + stride * k, vxbu_test(r, vxbu_dup((uint8_t) (1 << i))));
@@ -575,7 +575,7 @@ static void fill_tile(size_t code_len, Inst code[code_len], size_t resolution, s
 static void draw_tile(
     Arena arena,
     Arena code_arena,
-    Shapes shapes,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
@@ -595,7 +595,7 @@ static void draw_tile(
       draw_tile(
           arena,
           code_arena,
-          shapes,
+          geometry,
           code_len,
           code,
           xmin + 0.5f * xlen * (float) j,
@@ -617,7 +617,7 @@ static void draw_tile(
   specialize(
       arena,
       &code_arena,
-      shapes,
+      geometry,
       code_len,
       code,
       xmin,
@@ -646,7 +646,7 @@ static void draw_tile(
 
       draw_tile_16(
           arena,
-          shapes,
+          geometry,
           sub_code_len[t],
           sub_code[t],
           xmin + 0.25f * xlen * (float) j,
@@ -680,7 +680,7 @@ static void draw_tile(
     draw_tile(
         arena,
         code_arena,
-        shapes,
+        geometry,
         sub_code_len[t],
         sub_code[t],
         xmin + 0.25f * xlen * (float) j,
@@ -695,7 +695,7 @@ static void draw_tile(
 }
 
 void render(
-    Shapes shapes,
+    Geometry geometry,
     size_t code_len,
     Inst code[code_len],
     float xmin,
@@ -727,7 +727,7 @@ void render(
       specialize(
           arena,
           &code_arena,
-          shapes,
+          geometry,
           code_len,
           code,
           xmin + 0.5f * (xmax - xmin) * (float) j,
@@ -760,7 +760,7 @@ void render(
       draw_tile(
           arena,
           code_arena,
-          shapes,
+          geometry,
           sub_code_len[t],
           sub_code[t],
           xmin + 0.125f * (xmax - xmin) * (float) j,

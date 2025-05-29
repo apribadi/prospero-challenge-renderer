@@ -24,14 +24,14 @@ typedef struct {
 } Arena;
 
 __attribute__ ((noinline, noreturn))
-static void arena_oom(void) {
+static void arena_alloc_failed(void) {
   fprintf(stderr, "arena: allocation failed!\n");
   abort();
 }
 
 static void arena_init(Arena * arena, size_t capacity) {
   void * base = malloc(capacity);
-  if (! base) arena_oom();
+  if (! base) arena_alloc_failed();
   arena->base = base;
   arena->available = capacity;
 }
@@ -40,22 +40,22 @@ static void arena_drop(Arena * arena) {
   free(arena->base);
 }
 
-static inline void * arena_alloc(Arena * arena, size_t count, size_t size) {
-  if (! (count <= arena->available / size)) arena_oom();
+static inline void * arena_alloc_array(Arena * arena, size_t count, size_t size) {
+  if (count > arena->available / size) arena_alloc_failed();
   size_t n = (arena->available - count * size) & - (size_t) 8;
   arena->available = n;
   return (void *) (arena->base + n);
 }
 
-#define ALLOC(arena, count, T) \
-  (T *) arena_alloc((arena), (count), sizeof(T))
+#define ALLOC_ARRAY(arena, count, T) \
+  (T *) arena_alloc_array((arena), (count), sizeof(T))
 
-static inline void * arena_alloc_zeroed(Arena * arena, size_t count, size_t size) {
-  return memset(arena_alloc(arena, count, size), 0, count * size);
+static inline void * arena_alloc_array_zeroed(Arena * arena, size_t count, size_t size) {
+  return memset(arena_alloc_array(arena, count, size), 0, count * size);
 }
 
-#define ALLOC_ZEROED(arena, count, T) \
-  (T *) arena_alloc_zeroed((arena), (count), sizeof(T))
+#define ALLOC_ARRAY_ZEROED(arena, count, T) \
+  (T *) arena_alloc_array_zeroed((arena), (count), sizeof(T))
 
 // -------- PRIORITY QUEUE (AND SET) --------
 
@@ -67,8 +67,8 @@ typedef struct {
 
 static void pq_init(PQ * t, Arena * arena, size_t capacity) {
   t->size = 0;
-  t->data = ALLOC(arena, capacity, uint16_t);
-  t->included = ALLOC_ZEROED(arena, capacity, bool);
+  t->data = ALLOC_ARRAY(arena, capacity, uint16_t);
+  t->included = ALLOC_ARRAY_ZEROED(arena, capacity, bool);
 }
 
 static inline bool pq_is_empty(PQ * t) {
@@ -334,12 +334,12 @@ static void specialize(
     input.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  Slot1 * slots = ALLOC(&arena, code_len, Slot1);
+  Slot1 * slots = ALLOC_ARRAY(&arena, code_len, Slot1);
 
   analyze(shapes, code, &input, slots);
 
-  uint16_t * black = ALLOC(&arena, code_len, uint16_t);
-  uint16_t * remap = ALLOC(&arena, code_len, uint16_t);
+  uint16_t * black = ALLOC_ARRAY(&arena, code_len, uint16_t);
+  uint16_t * remap = ALLOC_ARRAY(&arena, code_len, uint16_t);
 
   PQ gray;
   pq_init(&gray, &arena, code_len);
@@ -377,7 +377,7 @@ static void specialize(
       }
     }
 
-    Inst * sub_code = ALLOC(code_arena, sub_code_len, Inst);
+    Inst * sub_code = ALLOC_ARRAY(code_arena, sub_code_len, Inst);
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
@@ -530,7 +530,7 @@ static void draw_tile_16(
 
   Input2 input;
 
-  Slot2 * slots = ALLOC(&arena, code_len, Slot2);
+  Slot2 * slots = ALLOC_ARRAY(&arena, code_len, Slot2);
 
   float dx = 0.0625f * xlen;
   float dy = 0.0625f * ylen;

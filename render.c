@@ -1,12 +1,13 @@
 #include <arm_neon.h>
 #include <assert.h>
+#include <math.h>
 #include <omp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 #include "simd.h"
 #include "render.h"
@@ -448,15 +449,15 @@ typedef struct Table2_ {
 static size_t op2_line(ARGS2) {
   Line l = geometry.line[inst.line.index];
   vzsf x = vzsf_load(input->x);
+  vzsf r = vzsf_fma(x, vzsf_dup(l.a), vzsf_dup(l.c));
   for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_dup(0);
+    vxbu m = vxbu_dup(0);
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vzsf z = vzsf_add_n(vzsf_mul_n(x, l.a), l.b * y);
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- l.c)));
-      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(r, vzsf_dup(- y * l.b)));
+      m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
     }
-    vxbu_store(&slots[pc].bitset[16 * h], r);
+    vxbu_store(&slots[pc].bitset[16 * h], m);
   }
   DISPATCH2;
 }
@@ -464,21 +465,20 @@ static size_t op2_line(ARGS2) {
 static size_t op2_ellipse(ARGS2) {
   Ellipse e = geometry.ellipse[inst.ellipse.index];
   vzsf x = vzsf_load(input->x);
+  vzsf r = vzsf_fma(x, vzsf_dup(e.a), vzsf_dup(e.c));
+  vzsf s = vzsf_fma(x, vzsf_dup(e.d), vzsf_dup(e.f));
   for (size_t h = 0; h < 2; h ++) {
-    vxbu r = vxbu_dup(0);
+    vxbu m = vxbu_dup(0);
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vzsf z =
-        vzsf_add_n(
-          vzsf_add(
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, e.a), y * e.b + e.c)),
-            vzsf_sq(vzsf_add_n(vzsf_mul_n(x, e.d), y * e.e + e.f))),
-          -1.0f);
+      vzsf u = vzsf_add(r, vzsf_dup(y * e.b));
+      vzsf v = vzsf_add(s, vzsf_dup(y * e.e));
+      vzsf z = vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f)));
       vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(vzsf_select(p, vzsf_neg(z), z), vzsf_dup(0.0f)));
-      r = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, r);
+      m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
     }
-    vxbu_store(&slots[pc].bitset[16 * h], r);
+    vxbu_store(&slots[pc].bitset[16 * h], m);
   }
   DISPATCH2;
 }

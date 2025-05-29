@@ -278,6 +278,15 @@ static inline vzsf vzsf_mul_n(vzsf x, float y) {
   }};
 }
 
+static inline vzsf vzsf_fma(vzsf x, vzsf y, vzsf z) {
+  return (float32x4x4_t) {{
+    vfmaq_f32(z.val[0], x.val[0], y.val[0]),
+    vfmaq_f32(z.val[1], x.val[1], y.val[1]),
+    vfmaq_f32(z.val[2], x.val[2], y.val[2]),
+    vfmaq_f32(z.val[3], x.val[3], y.val[3]),
+  }};
+}
+
 static inline vzsf vzsf_sq(vzsf x) {
   return vzsf_mul(x, x);
 }

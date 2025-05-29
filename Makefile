@@ -12,12 +12,12 @@ CFLAGS = \
 	-Wdouble-promotion \
 	-Wno-fixed-enum-extension \
 	-Wno-shift-op-parentheses \
-	-ffp-contract=off \
 	-fno-math-errno \
 	-fno-omit-frame-pointer
 
-#	-fsanitize=undefined \
+#	-ffp-contract=off \
 #	-fno-slp-vectorize \
+#	-fsanitize=undefined \
 
 default: pcr
 

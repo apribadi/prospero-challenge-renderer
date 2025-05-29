@@ -40,16 +40,22 @@ static void arena_drop(Arena * arena) {
   free(arena->base);
 }
 
-static inline void * arena_alloc(Arena * arena, size_t size) {
-  if (size > arena->available) arena_oom();
-  size_t n = (arena->available - size) & - (size_t) 8;
+static inline void * arena_alloc(Arena * arena, size_t count, size_t size) {
+  if (! (count <= arena->available / size)) arena_oom();
+  size_t n = (arena->available - count * size) & - (size_t) 8;
   arena->available = n;
   return (void *) (arena->base + n);
 }
 
-static inline void * arena_alloc_zeroed(Arena * arena, size_t size) {
-  return memset(arena_alloc(arena, size), 0, size);
+#define ALLOC(arena, count, T) \
+  (T *) arena_alloc((arena), (count), sizeof(T))
+
+static inline void * arena_alloc_zeroed(Arena * arena, size_t count, size_t size) {
+  return memset(arena_alloc(arena, count, size), 0, count * size);
 }
+
+#define ALLOC_ZEROED(arena, count, T) \
+  (T *) arena_alloc_zeroed((arena), (count), sizeof(T))
 
 // -------- PRIORITY QUEUE (AND SET) --------
 
@@ -61,8 +67,8 @@ typedef struct {
 
 static void pq_init(PQ * t, Arena * arena, size_t capacity) {
   t->size = 0;
-  t->data = arena_alloc(arena, capacity * sizeof(uint16_t));
-  t->included = arena_alloc_zeroed(arena, capacity * sizeof(bool));
+  t->data = ALLOC(arena, capacity, uint16_t);
+  t->included = ALLOC_ZEROED(arena, capacity, bool);
 }
 
 static inline bool pq_is_empty(PQ * t) {
@@ -328,12 +334,12 @@ static void specialize(
     input.y[k] = ymax - 0.25f * ylen * (float) k;
   }
 
-  Slot1 * slots = arena_alloc(&arena, code_len * sizeof(Slot1));
+  Slot1 * slots = ALLOC(&arena, code_len, Slot1);
 
   analyze(shapes, code, &input, slots);
 
-  uint16_t * black = arena_alloc(&arena, code_len * sizeof(uint16_t));
-  uint16_t * remap = arena_alloc(&arena, code_len * sizeof(uint16_t));
+  uint16_t * black = ALLOC(&arena, code_len, uint16_t);
+  uint16_t * remap = ALLOC(&arena, code_len, uint16_t);
 
   PQ gray;
   pq_init(&gray, &arena, code_len);
@@ -371,7 +377,7 @@ static void specialize(
       }
     }
 
-    Inst * sub_code = arena_alloc(code_arena, sub_code_len * sizeof(Inst));
+    Inst * sub_code = ALLOC(code_arena, sub_code_len, Inst);
 
     out_code[t] = sub_code;
     out_code_len[t] = sub_code_len;
@@ -524,7 +530,7 @@ static void draw_tile_16(
 
   Input2 input;
 
-  Slot2 * slots = arena_alloc(&arena, code_len * sizeof(Slot2));
+  Slot2 * slots = ALLOC(&arena, code_len, Slot2);
 
   float dx = 0.0625f * xlen;
   float dy = 0.0625f * ylen;

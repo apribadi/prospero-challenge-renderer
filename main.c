@@ -10,7 +10,7 @@
 #define XMAX +1.0f
 #define YMIN -1.0f
 #define YMAX +1.0f
-#define ITERATION_COUNT 100
+#define ITERATION_COUNT 500
 #define WARMUP true
 #define NUM_RESOLUTIONS 4
 

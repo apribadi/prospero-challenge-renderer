@@ -22,6 +22,7 @@
 
 typedef uint8x16_t    vxbu;
 typedef float32x4_t   vxsf;
+typedef uint32x4_t    vxsu;
 
 typedef uint8x16x2_t  vybu;
 typedef uint16x8x2_t  vyhu;
@@ -72,6 +73,30 @@ static inline vxsf vxsf_load(float p[4]) {
 
 static inline vxsf vxsf_dup(float x) {
   return vdupq_n_f32(x);
+}
+
+static inline float vxsf_get(vxsf x, size_t i) {
+  return x[i];
+}
+
+static inline vxsf vxsf_mul_n(vxsf x, float y) {
+  return vmulq_n_f32(x, y);
+}
+
+static inline vxsf vxsf_fma(vxsf x, vxsf y, vxsf z) {
+  return vfmaq_f32(z, x, y);
+}
+
+static inline vxsf vxsf_fma_n(vxsf x, float y, vxsf z) {
+  return vfmaq_n_f32(z, x, y);
+}
+
+static inline vxsf vxsf_select(vxsu p, vxsf x, vxsf y) {
+  return vbslq_f32(p, x, y);
+}
+
+static inline vxsu vxsu_dup(uint32_t x) {
+  return vdupq_n_u32(x);
 }
 
 static inline vybu vybu_load(uint8_t p[32]) {
@@ -293,6 +318,15 @@ static inline vzsf vzsf_fma(vzsf x, vzsf y, vzsf z) {
     vfmaq_f32(z.val[1], x.val[1], y.val[1]),
     vfmaq_f32(z.val[2], x.val[2], y.val[2]),
     vfmaq_f32(z.val[3], x.val[3], y.val[3]),
+  }};
+}
+
+static inline vzsf vzsf_fma_n(vzsf x, float y, vzsf z) {
+  return (float32x4x4_t) {{
+    vfmaq_n_f32(z.val[0], x.val[0], y),
+    vfmaq_n_f32(z.val[1], x.val[1], y),
+    vfmaq_n_f32(z.val[2], x.val[2], y),
+    vfmaq_n_f32(z.val[3], x.val[3], y),
   }};
 }
 

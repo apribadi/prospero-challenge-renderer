@@ -230,13 +230,34 @@ static inline Range input1_y(Input1 * input) {
     return table->ops[inst.op](geometry, code, input, slots, table, pc + 1, inst); \
   } while (0)
 
+static inline vzsf dup4x(vxsf x) {
+  return vzsf_from_vxsf_x4(x, x, x, x);
+}
+
+static inline vzsf dup4y(vxsf x) {
+  float a = vxsf_get(x, 0);
+  float b = vxsf_get(x, 1);
+  float c = vxsf_get(x, 2);
+  float d = vxsf_get(x, 3);
+  return vzsf_from_vxsf_x4(vxsf_dup(a), vxsf_dup(b), vxsf_dup(c), vxsf_dup(d));
+}
+
 static void op1_line(ARGS1) {
   Line l = geometry.line[inst.line.index];
-  Range x = input1_x(input);
-  Range y = input1_y(input);
-  Range z = range_add(range_mul_n(x, l.a), range_mul_n(y, l.b));
-  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- l.c), z.lo)));
-  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(z.hi, vzsf_dup(- l.c))));
+  vxsf xmin = vxsf_load(&input->x[0]);
+  vxsf xmax = vxsf_load(&input->x[1]);
+  vxsf ymin = vxsf_load(&input->y[1]);
+  vxsf ymax = vxsf_load(&input->y[0]);
+  vxsu p = vxsu_dup(l.a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(l.b < 0.0f ? UINT32_MAX : 0);
+  vxsf umin = vxsf_mul_n(vxsf_select(p, xmax, xmin), l.a);
+  vxsf umax = vxsf_mul_n(vxsf_select(p, xmin, xmax), l.a);
+  vxsf vmin = vxsf_mul_n(vxsf_select(q, ymax, ymin), l.b);
+  vxsf vmax = vxsf_mul_n(vxsf_select(q, ymin, ymax), l.b);
+  vzsf zmin = vzsf_add(dup4x(umin), dup4y(vmin));
+  vzsf zmax = vzsf_add(dup4x(umax), dup4y(vmax));
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- l.c), zmin)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(zmax, vzsf_dup(- l.c))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }
@@ -449,12 +470,12 @@ typedef struct Table2_ {
 static size_t op2_line(ARGS2) {
   Line l = geometry.line[inst.line.index];
   vzsf x = vzsf_load(input->x);
-  vzsf r = vzsf_fma(x, vzsf_dup(l.a), vzsf_dup(l.c));
+  vzsf r = vzsf_fma_n(x, l.a, vzsf_dup(l.c));
   for (size_t h = 0; h < 2; h ++) {
     vxbu m = vxbu_dup(0);
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(r, vzsf_dup(- y * l.b)));
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(r, vzsf_dup(- l.b * y)));
       m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
     }
     vxbu_store(&slots[pc].bitset[16 * h], m);
@@ -466,14 +487,14 @@ static size_t op2_ellipse(ARGS2) {
   Ellipse e = geometry.ellipse[inst.ellipse.index];
   vzsf x = vzsf_load(input->x);
   vzsu p = vzsu_dup(inst.ellipse.outside ? 1ul << 31 : 0);
-  vzsf r = vzsf_fma(x, vzsf_dup(e.a), vzsf_dup(e.c));
-  vzsf s = vzsf_fma(x, vzsf_dup(e.d), vzsf_dup(e.f));
+  vzsf r = vzsf_fma_n(x, e.a, vzsf_dup(e.c));
+  vzsf s = vzsf_fma_n(x, e.d, vzsf_dup(e.f));
   for (size_t h = 0; h < 2; h ++) {
     vxbu m = vxbu_dup(0);
     for (size_t i = 0; i < 8; i ++) {
       float y = input->y[8 * h + i];
-      vzsf u = vzsf_add(r, vzsf_dup(y * e.b));
-      vzsf v = vzsf_add(s, vzsf_dup(y * e.e));
+      vzsf u = vzsf_fma_n(vzsf_dup(y), e.b, r);
+      vzsf v = vzsf_fma_n(vzsf_dup(y), e.e, s);
       vzsf z = vzsf_xor(vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f))), p);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(0.0f)));
       m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);

@@ -462,14 +462,10 @@ static size_t op2_line(ARGS2) {
   DISPATCH2;
 }
 
-static inline vzsf vzsf_neg_if(vzsf x, vzsu p) {
-  return vzsf_xor(x, vzsu_and(p, vzsu_dup((uint32_t) (1 << 31))));
-}
-
 static size_t op2_ellipse(ARGS2) {
   Ellipse e = geometry.ellipse[inst.ellipse.index];
   vzsf x = vzsf_load(input->x);
-  vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
+  vzsu p = vzsu_dup(inst.ellipse.outside ? 1ul << 31 : 0);
   vzsf r = vzsf_fma(x, vzsf_dup(e.a), vzsf_dup(e.c));
   vzsf s = vzsf_fma(x, vzsf_dup(e.d), vzsf_dup(e.f));
   for (size_t h = 0; h < 2; h ++) {
@@ -478,7 +474,7 @@ static size_t op2_ellipse(ARGS2) {
       float y = input->y[8 * h + i];
       vzsf u = vzsf_add(r, vzsf_dup(y * e.b));
       vzsf v = vzsf_add(s, vzsf_dup(y * e.e));
-      vzsf z = vzsf_neg_if(vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f))), p);
+      vzsf z = vzsf_xor(vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f))), p);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(0.0f)));
       m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
     }

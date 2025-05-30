@@ -233,6 +233,15 @@ static inline vzsf vzsf_or(vzsf x, vzsf y) {
   }};
 }
 
+static inline vzsf vzsf_xor(vzsf x, vzsu y) {
+  return (float32x4x4_t) {{
+    vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(x.val[0]), y.val[0])),
+    vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(x.val[1]), y.val[1])),
+    vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(x.val[2]), y.val[2])),
+    vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(x.val[3]), y.val[3])),
+  }};
+}
+
 static inline vzsf vzsf_neg(vzsf x) {
   return (float32x4x4_t) {{
     vnegq_f32(x.val[0]),
@@ -319,7 +328,21 @@ static inline vzsf vzsf_max(vzsf x, vzsf y) {
 }
 
 static inline vzsu vzsu_dup(uint32_t x) {
-  return (uint32x4x4_t) {{ vdupq_n_u32(x), vdupq_n_u32(x), vdupq_n_u32(x), vdupq_n_u32(x) }};
+  return (uint32x4x4_t) {{
+    vdupq_n_u32(x),
+    vdupq_n_u32(x),
+    vdupq_n_u32(x),
+    vdupq_n_u32(x),
+  }};
+}
+
+static inline vzsu vzsu_and(vzsu x, vzsu y) {
+  return (uint32x4x4_t) {{
+    vandq_u8(x.val[0], y.val[0]),
+    vandq_u8(x.val[1], y.val[1]),
+    vandq_u8(x.val[2], y.val[2]),
+    vandq_u8(x.val[3], y.val[3]),
+  }};
 }
 
 static inline vxbu vzsu_vxbu_movemask(vzsu x) {

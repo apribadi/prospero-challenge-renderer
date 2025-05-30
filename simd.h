@@ -44,6 +44,14 @@ static inline vxbu vxbu_dup(uint8_t x) {
   return vdupq_n_u8(x);
 }
 
+static inline vxbu vxbu_add(vxbu x, vxbu y) {
+  return vaddq_u8(x, y);
+}
+
+static inline vxbu vxbu_sub(vxbu x, vxbu y) {
+  return vsubq_u8(x, y);
+}
+
 static inline vxbu vxbu_test(vxbu x, vxbu y) {
   return vtstq_u8(x, y);
 }
@@ -77,6 +85,10 @@ static inline vxsf vxsf_dup(float x) {
 
 static inline float vxsf_get(vxsf x, size_t i) {
   return x[i];
+}
+
+static inline vxsf vxsf_add_n(vxsf x, float y) {
+  return vaddq_f32(x, vdupq_n_f32(y));
 }
 
 static inline vxsf vxsf_mul_n(vxsf x, float y) {

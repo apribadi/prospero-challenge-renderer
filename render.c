@@ -139,44 +139,6 @@ static uint16_t pq_pop(PQ * t) {
   return r;
 }
 
-// -------- 16-WIDE INTERVAL ARITHMETIC --------
-
-typedef struct {
-  vzsf lo;
-  vzsf hi;
-} Range;
-
-static inline Range range_add(Range x, Range y) {
-  return (Range) {
-    vzsf_add(x.lo, y.lo),
-    vzsf_add(x.hi, y.hi),
-  };
-}
-
-static inline Range range_add_n(Range x, float y) {
-  return (Range) {
-    vzsf_add_n(x.lo, y),
-    vzsf_add_n(x.hi, y),
-  };
-}
-
-static inline Range range_mul_n(Range x, float y) {
-  vzsu p = vzsu_dup(y < 0.0f ? UINT32_MAX : 0);
-  return (Range) {
-    vzsf_mul_n(vzsf_select(p, x.hi, x.lo), y),
-    vzsf_mul_n(vzsf_select(p, x.lo, x.hi), y),
-  };
-}
-
-static inline Range range_sq(Range x) {
-  return (Range) {
-    vzsf_or(
-      vzsf_and(vzsf_mul(x.lo, x.lo), vzsf_lt(vzsf_dup(0.0f), x.lo)),
-      vzsf_and(vzsf_mul(x.hi, x.hi), vzsf_lt(x.hi, vzsf_dup(0.0f)))),
-    vzsf_max(vzsf_mul(x.lo, x.lo), vzsf_mul(x.hi, x.hi)),
-  };
-}
-
 // -------- FORWARD ANALYSIS FOR 16 SUBREGIONS --------
 
 typedef struct {
@@ -193,27 +155,6 @@ typedef struct {
 typedef struct Table1_ {
   void (* ops[6])(Geometry, Inst *, Input1 *, Slot1 *, struct Table1_ *, size_t, Inst);
 } Table1;
-
-static inline Range input1_x(Input1 * input) {
-  vxsf xmin = vxsf_load(&input->x[0]);
-  vxsf xmax = vxsf_load(&input->x[1]);
-  return (Range) {
-    vzsf_from_vxsf_x4(xmin, xmin, xmin, xmin),
-    vzsf_from_vxsf_x4(xmax, xmax, xmax, xmax),
-  };
-}
-
-static inline Range input1_y(Input1 * input) {
-  float y0 = input->y[0];
-  float y1 = input->y[1];
-  float y2 = input->y[2];
-  float y3 = input->y[3];
-  float y4 = input->y[4];
-  return (Range) {
-    vzsf_from_vxsf_x4(vxsf_dup(y1), vxsf_dup(y2), vxsf_dup(y3), vxsf_dup(y4)),
-    vzsf_from_vxsf_x4(vxsf_dup(y0), vxsf_dup(y1), vxsf_dup(y2), vxsf_dup(y3)),
-  };
-}
 
 #define ARGS1 \
   __attribute__((unused)) Geometry geometry, \
@@ -242,20 +183,57 @@ static inline vzsf dup4y(vxsf x) {
   return vzsf_from_vxsf_x4(vxsf_dup(a), vxsf_dup(b), vxsf_dup(c), vxsf_dup(d));
 }
 
+static inline vzsf min_grid_lin(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_mul_n(vxsf_select(p, xmax, xmin), a);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymax, ymin), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf max_grid_lin(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_mul_n(vxsf_select(p, xmin, xmax), a);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymin, ymax), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf min_grid_aff(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b, float c) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_add_n(vxsf_mul_n(vxsf_select(p, xmax, xmin), a), c);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymax, ymin), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf max_grid_aff(vxsf xmin, vxsf xmax, vxsf ymin, vxsf ymax, float a, float b, float c) {
+  vxsu p = vxsu_dup(a < 0.0f ? UINT32_MAX : 0);
+  vxsu q = vxsu_dup(b < 0.0f ? UINT32_MAX : 0);
+  vxsf u = vxsf_add_n(vxsf_mul_n(vxsf_select(p, xmin, xmax), a), c);
+  vxsf v = vxsf_mul_n(vxsf_select(q, ymin, ymax), b);
+  return vzsf_add(dup4x(u), dup4y(v));
+}
+
+static inline vzsf min_sq(vzsf xmin, vzsf xmax) {
+  return
+    vzsf_or(
+      vzsf_and(vzsf_mul(xmin, xmin), vzsf_lt(vzsf_dup(0.0f), xmin)),
+      vzsf_and(vzsf_mul(xmax, xmax), vzsf_lt(xmax, vzsf_dup(0.0f))));
+}
+
+static inline vzsf max_sq(vzsf xmin, vzsf xmax) {
+  return vzsf_max(vzsf_mul(xmin, xmin), vzsf_mul(xmax, xmax));
+}
+
 static void op1_line(ARGS1) {
   Line l = geometry.line[inst.line.index];
   vxsf xmin = vxsf_load(&input->x[0]);
   vxsf xmax = vxsf_load(&input->x[1]);
   vxsf ymin = vxsf_load(&input->y[1]);
   vxsf ymax = vxsf_load(&input->y[0]);
-  vxsu p = vxsu_dup(l.a < 0.0f ? UINT32_MAX : 0);
-  vxsu q = vxsu_dup(l.b < 0.0f ? UINT32_MAX : 0);
-  vxsf umin = vxsf_mul_n(vxsf_select(p, xmax, xmin), l.a);
-  vxsf umax = vxsf_mul_n(vxsf_select(p, xmin, xmax), l.a);
-  vxsf vmin = vxsf_mul_n(vxsf_select(q, ymax, ymin), l.b);
-  vxsf vmax = vxsf_mul_n(vxsf_select(q, ymin, ymax), l.b);
-  vzsf zmin = vzsf_add(dup4x(umin), dup4y(vmin));
-  vzsf zmax = vzsf_add(dup4x(umax), dup4y(vmax));
+  vzsf zmin = min_grid_lin(xmin, xmax, ymin, ymax, l.a, l.b);
+  vzsf zmax = max_grid_lin(xmin, xmax, ymin, ymax, l.a, l.b);
   vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(- l.c), zmin)));
   vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(zmax, vzsf_dup(- l.c))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
@@ -264,17 +242,19 @@ static void op1_line(ARGS1) {
 
 static void op1_ellipse(ARGS1) {
   Ellipse e = geometry.ellipse[inst.ellipse.index];
-  Range x = input1_x(input);
-  Range y = input1_y(input);
-  Range z =
-    range_add_n(
-      range_add(
-        range_sq(range_add_n(range_add(range_mul_n(x, e.a), range_mul_n(y, e.b)), e.c)),
-        range_sq(range_add_n(range_add(range_mul_n(x, e.d), range_mul_n(y, e.e)), e.f))),
-      -1.0f);
+  vxsf xmin = vxsf_load(&input->x[0]);
+  vxsf xmax = vxsf_load(&input->x[1]);
+  vxsf ymin = vxsf_load(&input->y[1]);
+  vxsf ymax = vxsf_load(&input->y[0]);
+  vzsf umin = min_grid_aff(xmin, xmax, ymin, ymax, e.a, e.b, e.c);
+  vzsf umax = max_grid_aff(xmin, xmax, ymin, ymax, e.a, e.b, e.c);
+  vzsf vmin = min_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
+  vzsf vmax = max_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
+  vzsf zmin = vzsf_add_n(vzsf_add(min_sq(umin, umax), min_sq(vmin, vmax)), -1.0f);
+  vzsf zmax = vzsf_add_n(vzsf_add(max_sq(umin, umax), max_sq(vmin, vmax)), -1.0f);
   vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
-  vzsf u = vzsf_select(p, vzsf_neg(z.hi), z.lo);
-  vzsf v = vzsf_select(p, vzsf_neg(z.lo), z.hi);
+  vzsf u = vzsf_select(p, vzsf_neg(zmax), zmin);
+  vzsf v = vzsf_select(p, vzsf_neg(zmin), zmax);
   vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
   vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
@@ -470,13 +450,14 @@ typedef struct Table2_ {
 static size_t op2_line(ARGS2) {
   Line l = geometry.line[inst.line.index];
   vzsf x = vzsf_load(input->x);
-  vzsf r = vzsf_fma_n(x, l.a, vzsf_dup(l.c));
+  vzsf z = vzsf_fma_n(x, l.a, vzsf_dup(l.c));
   for (size_t h = 0; h < 2; h ++) {
     vxbu m = vxbu_dup(0);
-    for (size_t i = 0; i < 8; i ++) {
+    for (size_t i = 8; i -- != 0; ) {
       float y = input->y[8 * h + i];
-      vxbu w = vzsu_vxbu_movemask(vzsf_le(r, vzsf_dup(- l.b * y)));
-      m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
+      vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(- l.b * y)));
+      m = vxbu_add(m, m);
+      m = vxbu_sub(m, w);
     }
     vxbu_store(&slots[pc].bitset[16 * h], m);
   }
@@ -491,13 +472,14 @@ static size_t op2_ellipse(ARGS2) {
   vzsf s = vzsf_fma_n(x, e.d, vzsf_dup(e.f));
   for (size_t h = 0; h < 2; h ++) {
     vxbu m = vxbu_dup(0);
-    for (size_t i = 0; i < 8; i ++) {
+    for (size_t i = 8; i -- != 0; ) {
       float y = input->y[8 * h + i];
-      vzsf u = vzsf_fma_n(vzsf_dup(y), e.b, r);
-      vzsf v = vzsf_fma_n(vzsf_dup(y), e.e, s);
+      vzsf u = vzsf_add_n(r, e.b * y);
+      vzsf v = vzsf_add_n(s, e.e * y);
       vzsf z = vzsf_xor(vzsf_fma(u, u, vzsf_fma(v, v, vzsf_dup(-1.0f))), p);
       vxbu w = vzsu_vxbu_movemask(vzsf_le(z, vzsf_dup(0.0f)));
-      m = vxbu_select(vxbu_dup((uint8_t) (1 << i)), w, m);
+      m = vxbu_add(m, m);
+      m = vxbu_sub(m, w);
     }
     vxbu_store(&slots[pc].bitset[16 * h], m);
   }

@@ -250,13 +250,13 @@ static void op1_ellipse(ARGS1) {
   vzsf umax = max_grid_aff(xmin, xmax, ymin, ymax, e.a, e.b, e.c);
   vzsf vmin = min_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
   vzsf vmax = max_grid_aff(xmin, xmax, ymin, ymax, e.d, e.e, e.f);
-  vzsf zmin = vzsf_add_n(vzsf_add(min_sq(umin, umax), min_sq(vmin, vmax)), -1.0f);
-  vzsf zmax = vzsf_add_n(vzsf_add(max_sq(umin, umax), max_sq(vmin, vmax)), -1.0f);
+  vzsf wmin = vzsf_add_n(vzsf_add(min_sq(umin, umax), min_sq(vmin, vmax)), -1.0f);
+  vzsf wmax = vzsf_add_n(vzsf_add(max_sq(umin, umax), max_sq(vmin, vmax)), -1.0f);
   vzsu p = vzsu_dup(inst.ellipse.outside ? UINT32_MAX : 0);
-  vzsf u = vzsf_select(p, vzsf_neg(zmax), zmin);
-  vzsf v = vzsf_select(p, vzsf_neg(zmin), zmax);
-  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), u)));
-  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(v, vzsf_dup(0.0f))));
+  vzsf zmin = vzsf_select(p, vzsf_neg(wmax), wmin);
+  vzsf zmax = vzsf_select(p, vzsf_neg(wmin), wmax);
+  vxbu_store(slots[pc].is_f, vzsu_vxbu_movemask(vzsf_lt(vzsf_dup(0.0f), zmin)));
+  vxbu_store(slots[pc].is_t, vzsu_vxbu_movemask(vzsf_le(zmax, vzsf_dup(0.0f))));
   vyhu_store(slots[pc].link, vyhu_dup((uint16_t) pc));
   DISPATCH1;
 }

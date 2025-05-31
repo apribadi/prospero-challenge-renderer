@@ -110,29 +110,28 @@ static uint16_t pq_pop(PQ * t) {
   included[r] = false;
 
   for (;;) {
-    size_t a = 2 * i + 1;
-    size_t b = 2 * i + 2;
+    size_t k = 2 * i + 1;
 
-    if (b < n) {
-      uint16_t u = data[a];
-      uint16_t v = data[b];
+    if (k + 1 < n) {
+      uint16_t u = data[k];
+      uint16_t v = data[k + 1];
       if (u <= x && v <= x) break;
-      bool p = u >= v;
-      data[i] = p ? u : v;
-      i = p ? a : b;
+      data[i] = u < v ? v : u;
+      i = k + (u < v);
       continue;
     }
 
-    if (a < n) {
-      uint16_t u = data[a];
+    if (k < n) {
+      uint16_t u = data[k];
       if (u <= x) break;
       data[i] = u;
-      i = a;
+      i = k;
       continue;
     }
 
     break;
   }
+
 
   data[i] = x;
 

@@ -29,9 +29,10 @@ typedef struct {
   float c;
 } Line;
 
-// (ax + by + c) ** 2 + (dx + ey + f) ** 2 <= 1
-//
-// or, if `outside`, then instead >= 1
+// if outside:
+//   (ax + by + c) ** 2 + (dx + ey + f) ** 2 >= 1
+// else:
+//   (ax + by + c) ** 2 + (dx + ey + f) ** 2 <= 1
 
 typedef struct {
   float a;

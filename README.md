@@ -64,13 +64,13 @@ The target instruction stream has the following operations (see render.h):
 
 ```
 LINE (a, b, c):
-  a * x + b * y + c <= 0
+  ax + by + c <= 0
 
 ELLIPSE (a, b, c, d, e, f, outside):
   if outside:
-    (a * x + b * y + c) ** 2 + (d * x + e * y + f) ** 2 >= 1
+    (ax + by + c) ** 2 + (dx + ey + f) ** 2 >= 1
   else:
-    (a * x + b * y + c) ** 2 + (d * x + e * y + f) ** 2 <= 1
+    (ax + by + c) ** 2 + (dx + ey + f) ** 2 <= 1
 
 AND (x, y):
   x & y

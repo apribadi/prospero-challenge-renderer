@@ -181,6 +181,7 @@ too much about whether tail-call elimination will be possible.
 [^1]: Janos Meny's renderer <https://github.com/Janos95/prospero_vm/>, which I
     timed at 2.44 ms/frame on my machine.
 
-[^2]: I timed Fidget at 7.54 ms/frame on my machine.
+[^2]: I timed Fidget <https://www.mattkeeter.com/projects/fidget> at 7.54
+    ms/frame on my machine.
 
 [^3]: The TODOs are mostly meant in the sense of "exercise left to the reader".

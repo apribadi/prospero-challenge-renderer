@@ -567,7 +567,7 @@ static void fill_tile_16(Inst * code, size_t stride, uint8_t * tile) {
 static void fill_tile(Inst * code, size_t resolution, size_t stride, uint8_t * tile) {
   assert(resolution >= 64);
 
-  uint8_t value = code[0].ret_const.value ? 192 : 64;
+  uint8_t value = code[0].ret_const.value ? 160 : 96;
 
   for (size_t i = 0; i < resolution; i ++) {
     for (size_t j = 0; j < resolution; j += 64) {
@@ -759,6 +759,17 @@ void render(
 
       size_t i = t / 16 / 2 * 4 + t % 16 / 4;;
       size_t j = t / 16 % 2 * 4 + t % 16 % 4;;
+
+      if (sub_code[t][0].op == OP_RET_CONST) {
+        fill_tile(
+            sub_code[t],
+            resolution / 8,
+            resolution,
+            &image[resolution / 8 * i][resolution / 8 * j]
+          );
+
+        continue;
+      }
 
       draw_tile(
           arena,

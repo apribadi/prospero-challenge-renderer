@@ -22,21 +22,21 @@ static uint8_t IMAGE_2048[2048][2048];
 
 static uint8_t IMAGE_4096[4096][4096];
 
-static size_t RESOLUTIONS[4] = {
+static size_t RESOLUTIONS[NUM_RESOLUTIONS] = {
   512,
   1024,
   2048,
-  4096
+  4096,
 };
 
-static uint8_t * IMAGES[4] = {
+static uint8_t * IMAGES[NUM_RESOLUTIONS] = {
   (uint8_t *) IMAGE_512,
   (uint8_t *) IMAGE_1024,
   (uint8_t *) IMAGE_2048,
-  (uint8_t *) IMAGE_4096
+  (uint8_t *) IMAGE_4096,
 };
 
-static char * FILE_NAMES[4] = {
+static char * FILE_NAMES[NUM_RESOLUTIONS] = {
   "prospero-512.pgm",
   "prospero-1024.pgm",
   "prospero-2048.pgm",

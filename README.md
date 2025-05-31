@@ -36,42 +36,41 @@ Highlights:
 
 - In a preprocessing step, we propagate the outer inequality `... <= 0` inwards
   to discover which quantities should be interpreted as implicit boundaries.
-  The remaining arithmetic expressions turn out to either be straight lines or
-  ellipses.
+  The boundaries turn out to be either straight lines or ellipses.
 
 - We recursively specialize the bytecode program to 16 subregions at a time.
   We use interval analysis to generate boolean constants, and then propagate
   constants and variable equivalences. Constant propagation on boolean
-  expressions allows us to prune strictly more sub-expressions than the min/max
+  expressions allows us to prune strictly more subexpressions than the min/max
   interval optimization described elsewhere.
 
-- In the implementation of the specialization step, the forwards analysis pass
+- In the implementation of the specialization steps, the forwards analysis pass
   is vectorized, and the backwards passes to extract optimized programs are
   sparse (i.e. scale with the number of instructions in the output program).
 
-- The vectorized portions of the program use Arm Neon intrinsics.
+- The vectorized portions of the program are written with Arm Neon intrinsics.
 
-> TODO [^3]: Target other platforms. Using AVX2 shouldn't require any
-> interesting changes, but for AVX-512 we'd want to take advantage of bitmask
-> registers.
+> TODO [^3]: Target other platforms. An AVX2 version should do basically
+> exactly the same thing as the Neon version, but for AVX-512 we'd want to take
+> advantage of its mask registers.
 
 # Bytecode Preprocessing
 
 We use a Python script `preprocess.py` to transform the provided instruction
 stream into our own bytecode instructions (we just output C code which we
-compile into end program, which is admittedly a bit hacky ...).
+compile into the end program, which is admittedly a bit hacky ...).
 
 The target instruction stream has the following operations (see render.h):
 
 ```
 LINE (a, b, c):
-  ax + by + c <= 0
+  a * x + b * y + c <= 0
 
 ELLIPSE (a, b, c, d, e, f, outside):
   if outside:
-    (ax + by + c) ** 2 + (dx + ey + f) ** 2 >= 1
+    (a * x + b * y + c) ** 2 + (d * x + e * y + f) ** 2 >= 1
   else:
-    (ax + by + c) ** 2 + (dx + ey + f) ** 2 <= 1
+    (a * x + b * y + c) ** 2 + (d * x + e * y + f) ** 2 <= 1
 
 AND (x, y):
   x & y
@@ -112,7 +111,8 @@ local pattern matching, hash-based deduplication, and dead code elimination.
 > operands.
 
 > TODO: We could segregate the leaf `LINE` and `ELLIPSE` instructions, and
-> compute them in separate dispatch-less loops.
+> compute them in separate dispatch-less loops. We already place their
+> parameters in separate arrays in order to keep instructions compact.
 
 > TODO: The bytecode preprocessing is (relatively) slow because it's a Python
 > script. We could implement a high performance version.
@@ -171,12 +171,18 @@ perform the best out of a few priority queue implementations.
 
 # Evaluating Pixels
 
-Our actual pixel-by-pixel evaluation doesn't do too much that's interesting.
+The interpreter loop that does our actual pixel-by-pixel evaluation doesn't do
+too much that's interesting.
 
 We evaluate 256 pixels at a time, so the instruction dispatch overhead
 shouldn't matter too much, but we still use an efficient tail-calling scheme.
 The program is already very much not platform independent, so we don't worry
 too much about whether tail-call elimination will be possible.
+
+> TODO: A funny idea for a more general version of this renderer would be to
+> JIT-compile arithmetic subgraphs but keep `UNION` and `INTERSECTION`
+> instructions interpreted. Then the whole thing could be structured as a
+> direct-threaded interpreter ...!
 
 [^1]: Janos Meny's renderer <https://github.com/Janos95/prospero_vm/>, which I
     timed at 2.44 ms/frame on my machine.

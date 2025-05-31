@@ -44,9 +44,9 @@ Highlights:
   expressions allows us to prune strictly more subexpressions than the min/max
   interval optimization described elsewhere.
 
-- In the implementation of the specialization steps, the forwards analysis pass
-  is vectorized, and the backwards passes to extract optimized programs are
-  sparse (i.e. scale with the number of instructions in the output program).
+- In the specialization procedure, the forward analysis pass is vectorized, and
+  the backward passes to extract optimized programs are sparse (i.e. scale
+  with the number of instructions in the output program).
 
 - The vectorized portions of the program are written with Arm Neon intrinsics.
 
@@ -161,7 +161,7 @@ Then when we traverse backwards to extract live instructions, we only need to
 do one extra hop to find the argument that we need, instead of arbitrarily many
 extra hops.
 
-Also, in the backwards traversal we use a priority queue to determine which
+Also, in the backward traversal we use a priority queue to determine which
 instruction to inspect next. A boring implicit binary heap turned out to
 perform the best out of a few priority queue implementations.
 

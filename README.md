@@ -76,7 +76,7 @@ AND (x, y):
   x & y
 
 OR (x, y):
-  x & y
+  x | y
 
 RET (x):
   return x

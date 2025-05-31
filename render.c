@@ -557,19 +557,91 @@ static void draw_tile_16(
 // -------- DRAW RECURSIVELY --------
 
 static void fill_tile_16(size_t code_len, Inst code[code_len], size_t stride, uint8_t * tile) {
-  uint8_t value = code[0].ret_const.value ? 192 : 32;
+  // per the spec, this should be `? 255 : 0`, but we add some grays for
+  // illustration
+  uint8_t value = code[0].ret_const.value ? 192 : 64;
 
   for (size_t i = 0; i < 16; i ++) {
     memset(tile + stride * i, value, 16);
   }
 }
 
-static void fill_tile(size_t code_len, Inst code[code_len], size_t resolution, size_t stride, uint8_t * tile) {
-  uint8_t value = code[0].ret_const.value ? 192 : 32;
+static void draw_tile_64(
+    Arena arena,
+    Arena code_arena,
+    Geometry geometry,
+    size_t code_len,
+    Inst code[code_len],
+    float xmin,
+    float xlen,
+    float ymax,
+    float ylen,
+    size_t stride,
+    uint8_t * tile
+  )
+{
+  size_t sub_code_len[16];
+  Inst * sub_code[16];
+
+  specialize(
+      arena,
+      &code_arena,
+      geometry,
+      code_len,
+      code,
+      xmin,
+      xlen,
+      ymax,
+      ylen,
+      sub_code_len,
+      sub_code
+    );
+
+  for (size_t t = 0; t < 16; t ++) {
+    size_t i = t / 4;
+    size_t j = t % 4;
+
+    if (sub_code[t][0].op == OP_RET_CONST) {
+      fill_tile_16(
+          sub_code_len[t],
+          sub_code[t],
+          stride,
+          tile + stride * 64 / 4 * i + 64 / 4 * j
+        );
+
+      continue;
+    }
+
+    draw_tile_16(
+        arena,
+        geometry,
+        sub_code_len[t],
+        sub_code[t],
+        xmin + 0.25f * xlen * (float) j,
+        0.25f * xlen,
+        ymax - 0.25f * ylen * (float) i,
+        0.25f * ylen,
+        stride,
+        tile + stride * 64 / 4 * i + 64 / 4 * j
+      );
+  }
+}
+
+static void fill_tile(
+    size_t code_len,
+    Inst code[code_len],
+    size_t resolution,
+    size_t stride,
+    uint8_t * tile
+  )
+{
+  uint8_t value = code[0].ret_const.value ? 192 : 64;
+
+  // NB: resolution >= 64
 
   for (size_t i = 0; i < resolution; i ++) {
-    for (size_t j = 0; j < resolution; j += 32) {
-      memset(tile + stride * i + j, value, 32);
+    for (size_t j = 0; j < resolution; j += 64) {
+      memset(tile + stride * i + j, value, 64);
     }
   }
 }
@@ -589,12 +661,33 @@ static void draw_tile(
     uint8_t * tile
   )
 {
+  if (resolution == 64) {
+    draw_tile_64(
+        arena,
+        code_arena,
+        geometry,
+        code_len,
+        code,
+        xmin,
+        xlen,
+        ymax,
+        ylen,
+        stride,
+        tile
+      );
+
+    return;
+  }
+
   if (resolution == 128) {
+    // Because each specialization step reduces the resolution by a factor of
+    // four, we need this "stutter-step" to handle some powers of two.
+
     for (size_t t = 0; t < 4; t ++) {
       size_t i = t / 2;
       size_t j = t % 2;
 
-      draw_tile(
+      draw_tile_64(
           arena,
           code_arena,
           geometry,
@@ -604,7 +697,6 @@ static void draw_tile(
           0.5f * xlen,
           ymax - 0.5f * ylen * (float) i,
           0.5f * ylen,
-          resolution / 2,
           stride,
           tile + stride * resolution / 2 * i + resolution / 2 * j
         );
@@ -629,39 +721,6 @@ static void draw_tile(
       sub_code_len,
       sub_code
     );
-
-  if (resolution == 64) {
-    for (size_t t = 0; t < 16; t ++) {
-      size_t i = t / 4;
-      size_t j = t % 4;
-
-      if (sub_code[t][0].op == OP_RET_CONST) {
-        fill_tile_16(
-            sub_code_len[t],
-            sub_code[t],
-            stride,
-            tile + stride * resolution / 4 * i + resolution / 4 * j
-          );
-
-        continue;
-      }
-
-      draw_tile_16(
-          arena,
-          geometry,
-          sub_code_len[t],
-          sub_code[t],
-          xmin + 0.25f * xlen * (float) j,
-          0.25f * xlen,
-          ymax - 0.25f * ylen * (float) i,
-          0.25f * ylen,
-          stride,
-          tile + stride * resolution / 4 * i + resolution / 4 * j
-        );
-    }
-
-    return;
-  }
 
   for (size_t t = 0; t < 16; t ++) {
     size_t i = t / 4;

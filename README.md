@@ -182,7 +182,7 @@ too much about whether tail-call elimination will be possible.
 > TODO: A funny idea for a more general version of this renderer would be to
 > JIT-compile arithmetic subgraphs but keep `UNION` and `INTERSECTION`
 > instructions interpreted. Then the whole thing could be structured as a
-> direct-threaded interpreter ...!
+> [direct-threaded interpreter](https://jilp.org/vol5/v5paper12.pdf) ...!
 
 [^1]: Janos Meny's renderer <https://github.com/Janos95/prospero_vm/>, which I
     timed at 2.44 ms/frame on my machine.

@@ -4,7 +4,8 @@ This is a renderer for the [Prospero Challenge](https://www.mattkeeter.com/proje
 
 To run, do `make` and `./pcr`. If your computer has both "performance" and
 "efficiency" cores, then you can instead try running `OMP_NUM_THREADS=$N ./pcr`
-for an appropriate value of `N` to only make use of the high performance cores.
+with an appropriate value of `N` to make use of only the high performance
+cores.
 
 The code and build rules are platform specific and will essentially only work
 on an Apple Mac with an M-series CPU. Also, you'll need to have LLVM installed
@@ -13,7 +14,7 @@ via Homebrew for OpenMP support.
 The platform limitations are not fundamental and it should be straightforward
 to port the code.
 
-This implementation is much faster than any other submission (as of late April
+This implementation is much faster than any other submission (as of late May
 2025) running on a CPU.
 
 Highlights:
@@ -22,12 +23,12 @@ Highlights:
   program) can draw frames at the following rates, benchmarked on an M1 Macbook
   Air using four Firestorm cores.
 
-  │ resolution │ ms/frame │
-  ├────────────┼──────────┤
-  │ 512        │ 0.216    │
-  │ 1024       │ 0.279    │
-  │ 2048       │ 0.396    │
-  │ 4096       │ 0.796    │
+  | resolution | ms/frame |
+  | ---------- | -------- |
+  | 512        | 0.216    |
+  | 1024       | 0.279    |
+  | 2048       | 0.396    |
+  | 4096       | 0.796    |
 
   At a 1024 pixel resolution, it is approximately 8x faster than the next
   fastest CPU renderer [^1], and approximately 25x faster than Fidget in JIT
